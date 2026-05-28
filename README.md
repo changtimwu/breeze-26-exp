@@ -38,6 +38,7 @@ The notebook covers: runtime sanity check → clone → install → engine overr
 - macOS on Apple Silicon (M1/M2/M3/M4). The script aborts on any other platform — MLX is Metal-only.
 - `pip install -U mlx-whisper`
 - For `--mic` mode: `pip install sounddevice`, and grant your terminal Microphone access (System Settings → Privacy & Security → Microphone). The first run will trigger the macOS permission prompt.
+- For `--continuous --vad` mode: additionally `pip install webrtcvad`.
 
 ### Run it
 
@@ -51,6 +52,8 @@ python mlx/test_mlx.py --mic                    # record from mic until Enter, t
 python mlx/test_mlx.py --mic --duration 10      # fixed 10s recording
 python mlx/test_mlx.py --continuous             # live chunked transcription, Ctrl-C to stop
 python mlx/test_mlx.py --continuous --chunk 4   # tune chunk size (default 5s)
+python mlx/test_mlx.py --continuous --vad       # VAD-segmented streaming (webrtcvad)
+python mlx/test_mlx.py --continuous --vad --vad-aggressiveness 3 --vad-silence-ms 800
 python mlx/test_mlx.py audio.m4a --fp16        # compare against the unquantized MLX model
 python mlx/test_mlx.py audio.m4a --word-timestamps
 ```
@@ -66,6 +69,18 @@ The script reports wall time and xRT per chunk, so 4-bit MLX numbers are directl
 #### Note on `--continuous`
 
 mlx-whisper has no true streaming API, so `--continuous` is the simplest thing that works: record into a fixed-size buffer in a background callback, transcribe each chunk independently when it fills, print as it lands. **No VAD, no overlap, no cross-chunk decoder state** — words spoken across a chunk boundary get cut. Shorter `--chunk` = lower latency but more boundary artifacts; longer = cleaner output but laggier feedback. A watchdog warns to stderr if transcription falls behind real-time recording.
+
+#### `--continuous --vad`
+
+Adds `webrtcvad`-based utterance segmentation on top of the continuous pipeline. webrtcvad classifies each 30 ms frame as speech or silence; the script keeps a 300 ms rolling pre-roll, opens an utterance on the first speech frame (prepending the pre-roll so onsets aren't clipped), and finalises it when it sees `--vad-silence-ms` of trailing silence (default 500 ms). Each finalised utterance is sent to `mlx_whisper.transcribe()` as one shot, so words no longer get split at arbitrary timer boundaries.
+
+Knobs:
+- `--vad-aggressiveness {0..3}`: webrtcvad's noise robustness. 0 is permissive (more false-speech, never miss real speech); 3 is aggressive (more false-silence, may clip very quiet speech). Default 2.
+- `--vad-silence-ms`: how long a pause must be before the script decides the utterance is over. Lower = snappier but cuts pauses-mid-thought; higher = waits for full sentences but more lag. Default 500.
+
+There's also a hardcoded 25 s safety cap on utterance length (Whisper degrades past 30 s of context), and a 300 ms minimum so single coughs don't trigger transcription. Tweak the constants in `transcribe_continuous_vad()` if you need to.
+
+Pattern is borrowed from [Progressing-Llama/Whisper-Live-STT](https://github.com/Progressing-Llama/Whisper-Live-STT) but switched from window-gating to utterance-segmentation.
 
 ---
 
