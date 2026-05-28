@@ -43,20 +43,27 @@ The notebook covers: runtime sanity check → clone → install → engine overr
 # Optional: clone the upstream repo next to mlx/ so test_mlx.py finds the bundled sample.
 git clone https://github.com/thc1006/breeze-asr-taigi.git
 
-python mlx/test_mlx.py                       # uses breeze-asr-taigi/data/test.m4a
-python mlx/test_mlx.py path/to/audio.m4a    # your own file
-python mlx/test_mlx.py --mic                 # record from mic until Enter, then transcribe
-python mlx/test_mlx.py --mic --duration 10   # fixed 10s recording
-python mlx/test_mlx.py audio.m4a --fp16     # compare against the unquantized MLX model
+python mlx/test_mlx.py                          # uses breeze-asr-taigi/data/test.m4a
+python mlx/test_mlx.py path/to/audio.m4a       # your own file
+python mlx/test_mlx.py --mic                    # record from mic until Enter, then transcribe
+python mlx/test_mlx.py --mic --duration 10      # fixed 10s recording
+python mlx/test_mlx.py --continuous             # live chunked transcription, Ctrl-C to stop
+python mlx/test_mlx.py --continuous --chunk 4   # tune chunk size (default 5s)
+python mlx/test_mlx.py audio.m4a --fp16        # compare against the unquantized MLX model
 python mlx/test_mlx.py audio.m4a --word-timestamps
 ```
 
-Outputs land next to the input audio:
+Outputs land next to the input audio (or in CWD for mic modes):
 - `<audio>.mlx.txt` — plain transcript
 - `<audio>.mlx.srt` — SubRip subtitles (skip with `--no-srt`)
 - `mic_YYYYMMDD_HHMMSS.wav` — the captured audio when using `--mic` (16 kHz mono)
+- `mic_YYYYMMDD_HHMMSS_session.wav` + `.mlx.txt` — captured audio and concatenated transcript when using `--continuous`
 
-The script reports wall time and xRT, so 4-bit MLX numbers are directly comparable to the Faster-Whisper benchmarks in the upstream README.
+The script reports wall time and xRT per chunk, so 4-bit MLX numbers are directly comparable to the Faster-Whisper benchmarks in the upstream README.
+
+#### Note on `--continuous`
+
+mlx-whisper has no true streaming API, so `--continuous` is the simplest thing that works: record into a fixed-size buffer in a background callback, transcribe each chunk independently when it fills, print as it lands. **No VAD, no overlap, no cross-chunk decoder state** — words spoken across a chunk boundary get cut. Shorter `--chunk` = lower latency but more boundary artifacts; longer = cleaner output but laggier feedback. A watchdog warns to stderr if transcription falls behind real-time recording.
 
 ---
 

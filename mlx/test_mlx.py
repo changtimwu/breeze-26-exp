@@ -11,16 +11,25 @@ Usage:
     python test_mlx.py path/to/audio.wav     # transcribe a specific file
     python test_mlx.py --mic                 # record from default mic until Enter
     python test_mlx.py --mic --duration 10   # record 10 seconds then transcribe
+    python test_mlx.py --continuous          # live chunked transcription (Ctrl-C to stop)
+    python test_mlx.py --continuous --chunk 4  # use 4s chunks instead of the 5s default
     python test_mlx.py audio.wav --fp16      # use the unquantized fp16 model
     python test_mlx.py audio.wav --no-srt    # skip SRT, only print text
 
-Mic mode needs `pip install sounddevice` and macOS microphone permission for
-your terminal (System Settings → Privacy & Security → Microphone).
+Mic / continuous mode needs `pip install sounddevice` and macOS microphone
+permission for your terminal (System Settings → Privacy & Security → Microphone).
+
+Continuous mode is naive chunked pseudo-streaming: it records into a fixed-size
+buffer in the background and transcribes each chunk independently when it fills.
+There is no overlap, no VAD, no cross-chunk decoder state — so words spoken
+across a chunk boundary get cut. Tune --chunk for the latency/accuracy
+trade-off you want.
 
 Outputs:
-    <audio>.mlx.txt   plain transcript
-    <audio>.mlx.srt   SubRip subtitles (unless --no-srt)
-    mic_YYYYMMDD_HHMMSS.wav   the captured audio (mic mode only)
+    <audio>.mlx.txt           plain transcript
+    <audio>.mlx.srt           SubRip subtitles (unless --no-srt)
+    mic_YYYYMMDD_HHMMSS.wav   the captured audio (--mic mode)
+    mic_YYYYMMDD_HHMMSS_session.wav + .mlx.txt   the captured session (--continuous)
 """
 
 from __future__ import annotations
@@ -143,24 +152,154 @@ def resolve_audio(arg: str | None) -> Path:
     )
 
 
+def transcribe_continuous(
+    model_id: str,
+    language: str,
+    chunk_seconds: float,
+    sample_rate: int = 16000,
+) -> int:
+    """Record from the default mic continuously, transcribing each chunk as it fills.
+
+    Stops on Ctrl-C. At exit, writes the full session audio and concatenated
+    transcript next to the working directory.
+    """
+    try:
+        import sounddevice as sd
+        import numpy as np
+    except ImportError:
+        sys.exit("[abort] sounddevice not installed. Run: pip install sounddevice")
+
+    import queue as queue_mod
+    import wave
+
+    try:
+        import mlx_whisper
+    except ImportError:
+        sys.exit("[abort] mlx_whisper not installed. Run: pip install -U mlx-whisper")
+
+    try:
+        dev = sd.query_devices(kind="input")
+        print(f"[mic] input device: {dev['name']}")
+    except Exception:
+        pass
+
+    print(f"[continuous] warming up model ({model_id}) ...")
+    mlx_whisper.transcribe(
+        np.zeros(int(0.5 * sample_rate), dtype=np.float32),
+        path_or_hf_repo=model_id,
+        language=language,
+        verbose=False,
+    )
+    print(f"[continuous] chunk={chunk_seconds:.1f}s, lang={language}. Press Ctrl-C to stop.\n")
+
+    chunk_samples = int(chunk_seconds * sample_rate)
+    q: queue_mod.Queue = queue_mod.Queue()
+    session_chunks: list = []
+    transcripts: list[str] = []
+
+    def callback(indata, frames, time_info, status):  # noqa: ARG001
+        if status:
+            print(f"[mic] {status}", file=sys.stderr)
+        q.put(indata.copy())
+
+    buffer = np.zeros((0,), dtype=np.int16)
+
+    try:
+        with sd.InputStream(samplerate=sample_rate, channels=1, dtype="int16", callback=callback):
+            while True:
+                try:
+                    block = q.get(timeout=0.5)
+                except queue_mod.Empty:
+                    continue
+                flat = block.flatten()
+                buffer = np.concatenate([buffer, flat])
+                session_chunks.append(flat)
+
+                while len(buffer) >= chunk_samples:
+                    chunk = buffer[:chunk_samples]
+                    buffer = buffer[chunk_samples:]
+
+                    audio_f32 = chunk.astype(np.float32) / 32768.0
+                    t0 = time.perf_counter()
+                    result = mlx_whisper.transcribe(
+                        audio_f32,
+                        path_or_hf_repo=model_id,
+                        language=language,
+                        verbose=False,
+                    )
+                    elapsed = time.perf_counter() - t0
+                    text = (result.get("text") or "").strip()
+
+                    ts = datetime.now().strftime("%H:%M:%S")
+                    xrt = chunk_seconds / elapsed if elapsed > 0 else float("inf")
+                    marker = text if text else "<silence>"
+                    print(f"[{ts}] ({elapsed:.2f}s, {xrt:.1f}x) {marker}", flush=True)
+                    if text:
+                        transcripts.append(text)
+
+                    # Warn if transcription is falling behind real-time recording.
+                    backlog = q.qsize()
+                    if backlog > 5:
+                        print(f"[continuous] warning: backlog={backlog} blocks "
+                              f"(transcription slower than real-time)", file=sys.stderr)
+    except KeyboardInterrupt:
+        print("\n[continuous] stopping ...")
+
+    if not session_chunks:
+        print("[continuous] no audio captured.")
+        return 0
+
+    full = np.concatenate(session_chunks)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    wav_out = Path(f"mic_{timestamp}_session.wav").resolve()
+    with wave.open(str(wav_out), "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(sample_rate)
+        wf.writeframes(full.tobytes())
+    print(f"[continuous] saved {len(full) / sample_rate:.1f}s of audio to {wav_out}")
+
+    if transcripts:
+        txt_out = wav_out.with_suffix(".mlx.txt")
+        txt_out.write_text("\n".join(transcripts) + "\n", encoding="utf-8")
+        print(f"[continuous] saved transcript to {txt_out}")
+
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("audio", nargs="?", help="audio file path (default: bundled test.m4a)")
     parser.add_argument("--mic", action="store_true", help="record from the default input device instead of reading a file")
     parser.add_argument("--duration", type=float, default=None,
                         help="mic recording length in seconds (default: record until Enter)")
+    parser.add_argument("--continuous", action="store_true",
+                        help="record from mic and transcribe chunk-by-chunk live until Ctrl-C")
+    parser.add_argument("--chunk", type=float, default=5.0,
+                        help="chunk size in seconds for --continuous mode (default: 5.0)")
     parser.add_argument("--fp16", action="store_true", help=f"use {MODEL_FP16} instead of the 4-bit model")
     parser.add_argument("--language", default="zh", help="language code passed to whisper (default: zh)")
     parser.add_argument("--word-timestamps", action="store_true", help="emit per-word timestamps")
     parser.add_argument("--no-srt", action="store_true", help="skip writing the .srt file")
     args = parser.parse_args()
 
-    if args.audio and args.mic:
-        sys.exit("[abort] pass either a positional audio path or --mic, not both.")
+    if args.audio and (args.mic or args.continuous):
+        sys.exit("[abort] pass either a positional audio path or --mic / --continuous, not both.")
+    if args.mic and args.continuous:
+        sys.exit("[abort] --continuous already records from mic; don't pass --mic too.")
     if args.duration is not None and not args.mic:
-        sys.exit("[abort] --duration only makes sense with --mic.")
+        sys.exit("[abort] --duration only makes sense with --mic. Use --chunk for --continuous.")
+    if args.chunk != 5.0 and not args.continuous:
+        sys.exit("[abort] --chunk only makes sense with --continuous.")
+    if args.chunk <= 0:
+        sys.exit("[abort] --chunk must be positive.")
 
     assert_apple_silicon()
+
+    model_id = MODEL_FP16 if args.fp16 else MODEL_4BIT
+
+    if args.continuous:
+        return transcribe_continuous(model_id, args.language, args.chunk)
 
     try:
         import mlx_whisper
@@ -168,7 +307,6 @@ def main() -> int:
         sys.exit("[abort] mlx_whisper not installed. Run: pip install -U mlx-whisper")
 
     audio_path = record_mic(args.duration) if args.mic else resolve_audio(args.audio)
-    model_id = MODEL_FP16 if args.fp16 else MODEL_4BIT
 
     print(f"[info] model:  {model_id}")
     print(f"[info] audio:  {audio_path}")
