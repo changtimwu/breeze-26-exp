@@ -9,6 +9,7 @@ Evaluation scratchpad for MediaTek Research's Breeze family of Taiwanese speech 
 |---|---|---|---|
 | [`breeze_asr_taigi_colab.ipynb`](./breeze_asr_taigi_colab.ipynb) | ASR | Google Colab (Linux + NVIDIA T4) | Faster-Whisper (CT2, `int8_float16`) — [`paulpengtw/faster-whisper-Breeze-ASR-26`](https://huggingface.co/paulpengtw/faster-whisper-Breeze-ASR-26) |
 | [`mlx/test_mlx.py`](./mlx/test_mlx.py) | ASR | Apple Silicon (Metal) | `mlx-whisper`, 4-bit — [`doggy8088/Breeze-ASR-26-MLX-4bit`](https://huggingface.co/doggy8088/Breeze-ASR-26-MLX-4bit) |
+| [`mlx/web/`](./mlx/web/) | ASR (browser → backend) | Apple Silicon + any modern browser | FastAPI + WebSocket + webrtcvad, same MLX model |
 | [`breezyvoice_colab.ipynb`](./breezyvoice_colab.ipynb) | TTS / voice cloning | Google Colab (Linux + NVIDIA T4) | BreezyVoice (CosyVoice-derived) — [`MediaTek-Research/BreezyVoice`](https://huggingface.co/MediaTek-Research/BreezyVoice) |
 
 ---
@@ -86,7 +87,39 @@ Pattern is borrowed from [Progressing-Llama/Whisper-Live-STT](https://github.com
 
 ---
 
-## 3. BreezyVoice notebook — voice-cloning TTS on a T4
+## 3. Web app — `mlx/web/` (browser mic → MLX backend)
+
+A tiny FastAPI + WebSocket app that gives the CLI's `--continuous --vad` pipeline a browser frontend. The browser captures mic at 16 kHz, sends raw int16 PCM frames over a WebSocket, and the server runs the same webrtcvad utterance segmentation as `test_mlx.py`, then transcribes each finalised utterance with `mlx-whisper` and streams results back as JSON.
+
+### Run it
+
+```bash
+pip install fastapi 'uvicorn[standard]' webrtcvad mlx-whisper numpy
+cd mlx/web
+python server.py                          # → http://127.0.0.1:8000
+python server.py --port 8080 --fp16       # full-precision MLX model
+python server.py --vad-silence-ms 800     # wait longer before closing an utterance
+python server.py --host 0.0.0.0           # expose to LAN
+```
+
+Open the URL in any modern browser, click **Start**, allow microphone access, and start talking. Utterances appear as the backend finalises them, with per-utterance timings (spoken duration, decode wall time, xRT).
+
+### Architecture
+
+- **Browser** (`index.html`): `AudioContext({sampleRate: 16000})` → `AudioWorklet` that batches Float32 into Int16 PCM in 120 ms chunks (4 × 30 ms VAD frames) and posts them through a WebSocket as binary messages. UI follows the cream/charcoal design system in `mlx/DESIGN.md`.
+- **Server** (`server.py`): one `webrtcvad` state machine per connection — pre-roll deque, speech accumulator, silence-triggered finalize — same logic as `transcribe_continuous_vad()` in `test_mlx.py`. Transcription runs in `asyncio.to_thread()` so the WebSocket event loop stays responsive. The model is warmed up at startup with 0.5 s of silence.
+- **Protocol**: client → server sends raw `int16` PCM; server → client sends JSON: `{"type": "ready", ...}` on connect, `{"type": "speaking", "on": bool}` on VAD transitions, `{"type": "utterance", "text", "spoken_s", "decode_s", "xrt", "ts"}` per finalised utterance.
+
+### Caveats
+
+- Apple Silicon only (the server aborts on anything else — MLX is Metal-only).
+- Browser must honour `AudioContext({sampleRate: 16000})`. Modern Safari and Chrome on macOS do; the page warns in the UI if a different rate comes back.
+- Single user per server. No auth, no TLS. Bind to `127.0.0.1` unless you trust the LAN.
+- The Camera Plain Variable typeface called out in the design spec isn't free; the page uses the `ui-sans-serif, system-ui` fallback chain — on macOS that resolves to San Francisco.
+
+---
+
+## 4. BreezyVoice notebook — voice-cloning TTS on a T4
 
 [`breezyvoice_colab.ipynb`](./breezyvoice_colab.ipynb) drives `single_inference.py` from the BreezyVoice repo to clone a speaker's voice and synthesize Taiwanese Mandarin text.
 

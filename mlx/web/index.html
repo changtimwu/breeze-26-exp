@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Breeze-ASR-26 Live</title>
+  <style>
+    :root {
+      --bg: #f7f4ed;
+      --ink: #1c1c1c;
+      --ink-82: rgba(28, 28, 28, 0.82);
+      --ink-40: rgba(28, 28, 28, 0.4);
+      --ink-04: rgba(28, 28, 28, 0.04);
+      --ink-03: rgba(28, 28, 28, 0.03);
+      --muted: #5f5f5d;
+      --border: #eceae4;
+      --off-white: #fcfbf8;
+      --green: #3a9d7a;
+      --red: #c4524c;
+      --inset-shadow:
+        rgba(255, 255, 255, 0.2) 0 0.5px 0 0 inset,
+        rgba(0, 0, 0, 0.2) 0 0 0 0.5px inset,
+        rgba(0, 0, 0, 0.05) 0 1px 2px 0;
+      --focus-shadow: rgba(0, 0, 0, 0.1) 0 4px 12px;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--ink);
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+                   "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+      font-size: 16px;
+      font-weight: 400;
+      line-height: 1.5;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    main {
+      flex: 1;
+      width: 100%;
+      max-width: 760px;
+      margin: 0 auto;
+      padding: 96px 24px 56px;
+    }
+
+    h1 {
+      margin: 0 0 16px;
+      font-size: 60px;
+      font-weight: 600;
+      line-height: 1.05;
+      letter-spacing: -1.5px;
+      color: var(--ink);
+    }
+
+    .subtitle {
+      margin: 0 0 56px;
+      max-width: 540px;
+      font-size: 18px;
+      line-height: 1.38;
+      color: var(--muted);
+    }
+
+    .card {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 28px 32px;
+      margin-bottom: 24px;
+    }
+
+    .controls {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+      flex-wrap: wrap;
+    }
+
+    button.primary {
+      background: var(--ink);
+      color: var(--off-white);
+      border: none;
+      padding: 12px 28px;
+      border-radius: 6px;
+      font: inherit;
+      font-size: 16px;
+      font-weight: 400;
+      cursor: pointer;
+      box-shadow: var(--inset-shadow);
+      transition: opacity 0.15s ease, box-shadow 0.15s ease;
+      min-width: 110px;
+    }
+    button.primary:hover { opacity: 0.92; }
+    button.primary:active { opacity: 0.8; }
+    button.primary:focus-visible { box-shadow: var(--inset-shadow), var(--focus-shadow); outline: none; }
+    button.primary:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    .status {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 14px;
+      color: var(--muted);
+    }
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 9999px;
+      background: var(--ink-40);
+      transition: background 0.15s ease, transform 0.15s ease;
+      flex-shrink: 0;
+    }
+    .dot.connected { background: var(--green); }
+    .dot.speaking  { background: var(--ink); animation: pulse 0.9s ease-in-out infinite; }
+    .dot.error     { background: var(--red); }
+    @keyframes pulse {
+      0%, 100% { opacity: 0.35; transform: scale(1); }
+      50%      { opacity: 1;    transform: scale(1.4); }
+    }
+
+    .meter {
+      flex: 1;
+      min-width: 80px;
+      max-width: 220px;
+      height: 4px;
+      background: var(--ink-04);
+      border-radius: 9999px;
+      overflow: hidden;
+    }
+    .meter-bar {
+      height: 100%;
+      width: 0%;
+      background: var(--ink);
+      border-radius: 9999px;
+      transition: width 60ms linear;
+    }
+
+    .info {
+      margin: 16px 0 0;
+      font-size: 14px;
+      color: var(--muted);
+      min-height: 1.5em;
+    }
+
+    .transcript {
+      display: flex;
+      flex-direction: column;
+      gap: 22px;
+      min-height: 240px;
+    }
+    .empty-state {
+      padding: 48px 0;
+      text-align: center;
+      color: var(--muted);
+      font-size: 16px;
+    }
+    .empty-state strong { color: var(--ink-82); font-weight: 600; }
+
+    .utterance {
+      padding-bottom: 22px;
+      border-bottom: 1px solid var(--border);
+    }
+    .utterance:last-child { padding-bottom: 0; border-bottom: none; }
+    .utterance .meta {
+      margin: 0 0 6px;
+      font-size: 13px;
+      color: var(--muted);
+      letter-spacing: 0.01em;
+    }
+    .utterance .text {
+      margin: 0;
+      font-size: 18px;
+      line-height: 1.4;
+      color: var(--ink);
+    }
+    .utterance.empty-text .text {
+      color: var(--muted);
+      font-style: italic;
+    }
+
+    footer {
+      padding: 32px 24px;
+      text-align: center;
+      font-size: 14px;
+      color: var(--muted);
+      border-top: 1px solid var(--border);
+    }
+    footer a {
+      color: var(--ink);
+      text-decoration: underline;
+    }
+    footer a:hover { color: var(--ink-82); }
+
+    @media (max-width: 640px) {
+      main { padding: 56px 16px 32px; }
+      h1 { font-size: 36px; letter-spacing: -0.9px; line-height: 1.1; }
+      .subtitle { font-size: 16px; margin-bottom: 32px; }
+      .card { padding: 20px; }
+      .controls { gap: 14px; }
+      .meter { max-width: none; width: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Breeze-ASR-26 Live</h1>
+    <p class="subtitle">
+      Speak into your microphone. Audio streams to a local MLX backend that
+      segments by utterance via webrtcvad and transcribes Taiwanese Hokkien
+      and Mandarin in real time.
+    </p>
+
+    <div class="card">
+      <div class="controls">
+        <button id="toggle" class="primary" type="button">Start</button>
+        <div class="status">
+          <span id="dot" class="dot" aria-hidden="true"></span>
+          <span id="status-text">Idle</span>
+        </div>
+        <div class="meter" aria-hidden="true">
+          <div id="meter-bar" class="meter-bar"></div>
+        </div>
+      </div>
+      <p id="info" class="info"></p>
+    </div>
+
+    <div class="card">
+      <div id="transcript" class="transcript">
+        <div class="empty-state">
+          Press <strong>Start</strong> and begin speaking — finished
+          utterances will appear here as the backend finalises them.
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <footer>
+    <a href="https://github.com/changtimwu/breeze-26-exp" target="_blank" rel="noopener">github.com/changtimwu/breeze-26-exp</a>
+    &nbsp;·&nbsp;
+    Backend:
+    <a href="https://huggingface.co/doggy8088/Breeze-ASR-26-MLX-4bit" target="_blank" rel="noopener">Breeze-ASR-26 MLX</a>
+    + webrtcvad + FastAPI
+  </footer>
+
+  <script>
+    // AudioWorklet — runs on the audio thread, batches Float32 input into
+    // Int16 PCM chunks of ~120 ms (4 × 30 ms VAD frames) and posts them
+    // back to the main thread, along with the per-chunk peak amplitude
+    // for the level meter.
+    const workletCode = `
+      class PCMWorklet extends AudioWorkletProcessor {
+        constructor() {
+          super();
+          this.buffer = new Float32Array(0);
+          this.targetSize = 1920; // 120 ms at 16 kHz
+        }
+        process(inputs) {
+          const input = inputs[0];
+          if (!input || input.length === 0) return true;
+          const channel = input[0];
+          if (!channel || channel.length === 0) return true;
+
+          const next = new Float32Array(this.buffer.length + channel.length);
+          next.set(this.buffer, 0);
+          next.set(channel, this.buffer.length);
+          this.buffer = next;
+
+          while (this.buffer.length >= this.targetSize) {
+            const chunk = this.buffer.slice(0, this.targetSize);
+            this.buffer = this.buffer.slice(this.targetSize);
+
+            let peak = 0;
+            for (let i = 0; i < chunk.length; i++) {
+              const v = chunk[i] < 0 ? -chunk[i] : chunk[i];
+              if (v > peak) peak = v;
+            }
+
+            const int16 = new Int16Array(chunk.length);
+            for (let i = 0; i < chunk.length; i++) {
+              let s = chunk[i];
+              if (s > 1) s = 1; else if (s < -1) s = -1;
+              int16[i] = (s * 32767) | 0;
+            }
+
+            this.port.postMessage({ pcm: int16, peak: peak }, [int16.buffer]);
+          }
+          return true;
+        }
+      }
+      registerProcessor('pcm-worklet', PCMWorklet);
+    `;
+
+    const toggleBtn   = document.getElementById('toggle');
+    const dotEl       = document.getElementById('dot');
+    const statusTxt   = document.getElementById('status-text');
+    const meterBar    = document.getElementById('meter-bar');
+    const transcript  = document.getElementById('transcript');
+    const infoEl      = document.getElementById('info');
+
+    let audioContext = null;
+    let mediaStream  = null;
+    let workletNode  = null;
+    let socket       = null;
+    let running      = false;
+    let firstResult  = true;
+
+    function setStatus(text, cls) {
+      statusTxt.textContent = text;
+      dotEl.className = 'dot' + (cls ? ' ' + cls : '');
+    }
+
+    function escapeHtml(s) {
+      return s.replace(/[&<>"']/g, c => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+      })[c]);
+    }
+
+    function addUtterance(msg) {
+      if (firstResult) {
+        transcript.innerHTML = '';
+        firstResult = false;
+      }
+      const el = document.createElement('div');
+      el.className = 'utterance' + (msg.text ? '' : ' empty-text');
+      const meta = `${msg.ts} · ${msg.spoken_s}s spoken · ${msg.decode_s}s decode · ${msg.xrt}× realtime`;
+      el.innerHTML =
+        '<p class="meta">' + escapeHtml(meta) + '</p>' +
+        '<p class="text">' + (msg.text ? escapeHtml(msg.text) : '&lt;no transcription&gt;') + '</p>';
+      transcript.appendChild(el);
+      el.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    }
+
+    async function start() {
+      toggleBtn.disabled = true;
+      try {
+        setStatus('Requesting microphone…', '');
+
+        mediaStream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            channelCount: 1,
+            sampleRate: 16000,
+            echoCancellation: true,
+            noiseSuppression: false,
+            autoGainControl: false,
+          }
+        });
+
+        audioContext = new AudioContext({ sampleRate: 16000 });
+        if (audioContext.sampleRate !== 16000) {
+          infoEl.textContent =
+            `Browser refused 16 kHz capture (got ${audioContext.sampleRate} Hz). ` +
+            `Transcription quality may suffer.`;
+        }
+
+        const blobUrl = URL.createObjectURL(
+          new Blob([workletCode], { type: 'application/javascript' })
+        );
+        await audioContext.audioWorklet.addModule(blobUrl);
+        URL.revokeObjectURL(blobUrl);
+
+        const source = audioContext.createMediaStreamSource(mediaStream);
+        workletNode = new AudioWorkletNode(audioContext, 'pcm-worklet');
+        source.connect(workletNode);
+        // Intentionally do NOT connect workletNode to destination — don't echo the mic.
+
+        const wsProto = location.protocol === 'https:' ? 'wss://' : 'ws://';
+        socket = new WebSocket(wsProto + location.host + '/ws');
+        socket.binaryType = 'arraybuffer';
+
+        socket.onopen = () => {
+          running = true;
+          firstResult = true;
+          toggleBtn.textContent = 'Stop';
+          toggleBtn.disabled = false;
+          setStatus('Listening', 'connected');
+        };
+
+        socket.onmessage = (ev) => {
+          let msg;
+          try { msg = JSON.parse(ev.data); } catch { return; }
+          if (msg.type === 'ready') {
+            const modelShort = msg.model.split('/').pop();
+            infoEl.textContent =
+              `Model: ${modelShort} · language=${msg.language} · ` +
+              `VAD aggressiveness=${msg.vad_aggressiveness}, silence=${msg.vad_silence_ms} ms`;
+          } else if (msg.type === 'speaking') {
+            setStatus(msg.on ? 'Speaking…' : 'Listening', msg.on ? 'speaking' : 'connected');
+          } else if (msg.type === 'utterance') {
+            addUtterance(msg);
+          } else if (msg.type === 'error') {
+            setStatus('Server error: ' + msg.message, 'error');
+          } else if (msg.type === 'info') {
+            infoEl.textContent = msg.message;
+          }
+        };
+
+        socket.onclose = () => {
+          if (running) {
+            setStatus('Disconnected', '');
+            cleanup();
+          }
+        };
+
+        socket.onerror = () => {
+          setStatus('WebSocket error', 'error');
+        };
+
+        workletNode.port.onmessage = (ev) => {
+          if (!running || !socket || socket.readyState !== WebSocket.OPEN) return;
+          const { pcm, peak } = ev.data;
+          socket.send(pcm.buffer);
+          meterBar.style.width = Math.min(100, peak * 200) + '%';
+        };
+      } catch (e) {
+        setStatus('Error: ' + (e.message || e), 'error');
+        await cleanup();
+        toggleBtn.disabled = false;
+      }
+    }
+
+    async function cleanup() {
+      running = false;
+      meterBar.style.width = '0%';
+      toggleBtn.textContent = 'Start';
+      toggleBtn.disabled = false;
+      if (workletNode) { try { workletNode.disconnect(); } catch (_) {} workletNode = null; }
+      if (audioContext) { try { await audioContext.close(); } catch (_) {} audioContext = null; }
+      if (mediaStream) {
+        mediaStream.getTracks().forEach(t => t.stop());
+        mediaStream = null;
+      }
+    }
+
+    async function stop() {
+      const s = socket;
+      socket = null;
+      if (s && s.readyState === WebSocket.OPEN) {
+        try { s.close(); } catch (_) {}
+      }
+      await cleanup();
+      setStatus('Idle', '');
+    }
+
+    toggleBtn.addEventListener('click', async () => {
+      if (running) await stop(); else await start();
+    });
+  </script>
+</body>
+</html>
