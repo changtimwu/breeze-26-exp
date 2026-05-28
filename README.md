@@ -1,13 +1,15 @@
 # breeze-26-exp
 
-Evaluation scratchpad for [thc1006/breeze-asr-taigi](https://github.com/thc1006/breeze-asr-taigi) — a wrapper around MediaTek's **Breeze-ASR-26** (a Whisper-large-v2 fine-tune for Taiwanese Hokkien).
+Evaluation scratchpad for MediaTek Research's Breeze family of Taiwanese speech models:
 
-Two runtimes are tested here:
+- **Breeze-ASR-26** — Whisper-large-v2 fine-tune for Taiwanese Hokkien ASR (via [thc1006/breeze-asr-taigi](https://github.com/thc1006/breeze-asr-taigi)).
+- **BreezyVoice** — Voice-cloning TTS for Taiwanese Mandarin (via [mtkresearch/BreezyVoice](https://github.com/mtkresearch/BreezyVoice)).
 
-| Artifact | Runtime | Engine | Model |
+| Artifact | Task | Runtime | Engine / Model |
 |---|---|---|---|
-| [`breeze_asr_taigi_colab.ipynb`](./breeze_asr_taigi_colab.ipynb) | Google Colab (Linux + NVIDIA T4) | Faster-Whisper (CT2, `int8_float16`) | [`paulpengtw/faster-whisper-Breeze-ASR-26`](https://huggingface.co/paulpengtw/faster-whisper-Breeze-ASR-26) |
-| [`mlx/test_mlx.py`](./mlx/test_mlx.py) | Apple Silicon (Metal) | `mlx-whisper`, 4-bit quantized | [`doggy8088/Breeze-ASR-26-MLX-4bit`](https://huggingface.co/doggy8088/Breeze-ASR-26-MLX-4bit) |
+| [`breeze_asr_taigi_colab.ipynb`](./breeze_asr_taigi_colab.ipynb) | ASR | Google Colab (Linux + NVIDIA T4) | Faster-Whisper (CT2, `int8_float16`) — [`paulpengtw/faster-whisper-Breeze-ASR-26`](https://huggingface.co/paulpengtw/faster-whisper-Breeze-ASR-26) |
+| [`mlx/test_mlx.py`](./mlx/test_mlx.py) | ASR | Apple Silicon (Metal) | `mlx-whisper`, 4-bit — [`doggy8088/Breeze-ASR-26-MLX-4bit`](https://huggingface.co/doggy8088/Breeze-ASR-26-MLX-4bit) |
+| [`breezyvoice_colab.ipynb`](./breezyvoice_colab.ipynb) | TTS / voice cloning | Google Colab (Linux + NVIDIA T4) | BreezyVoice (CosyVoice-derived) — [`MediaTek-Research/BreezyVoice`](https://huggingface.co/MediaTek-Research/BreezyVoice) |
 
 ---
 
@@ -64,6 +66,34 @@ The script reports wall time and xRT per chunk, so 4-bit MLX numbers are directl
 #### Note on `--continuous`
 
 mlx-whisper has no true streaming API, so `--continuous` is the simplest thing that works: record into a fixed-size buffer in a background callback, transcribe each chunk independently when it fills, print as it lands. **No VAD, no overlap, no cross-chunk decoder state** — words spoken across a chunk boundary get cut. Shorter `--chunk` = lower latency but more boundary artifacts; longer = cleaner output but laggier feedback. A watchdog warns to stderr if transcription falls behind real-time recording.
+
+---
+
+---
+
+## 3. BreezyVoice notebook — voice-cloning TTS on a T4
+
+[`breezyvoice_colab.ipynb`](./breezyvoice_colab.ipynb) drives `single_inference.py` from the BreezyVoice repo to clone a speaker's voice and synthesize Taiwanese Mandarin text.
+
+### Why it's not just `pip install -r requirements.txt`
+
+BreezyVoice depends on `ttsfrd-0.3.9-cp310-cp310-linux_x86_64.whl` (the Mandarin text frontend), which is built for **Python 3.10 only**. Modern Colab ships Python 3.11, so the notebook bootstraps a Python 3.10 venv with `uv` and installs everything into it. Cells then invoke the inference scripts through `.venv/bin/python`.
+
+Other tweaks:
+- `DS_BUILD_OPS=0` is set so DeepSpeed installs without ahead-of-time op compilation (JIT at runtime instead). Without this the install can stall for ten minutes.
+- `PYTHONUTF8=1` is exported globally — required by the upstream README for any non-ASCII text on the CLI.
+
+### Run it
+
+1. Open [`breezyvoice_colab.ipynb`](./breezyvoice_colab.ipynb) in Colab and switch to a GPU runtime.
+2. Run cells top-to-bottom. The requirements install is slow (~10–20 min) and the first inference downloads the model (~a few GB).
+3. The bundled inference example uses `data/example.wav` as the speaker prompt and writes `results/out.wav`.
+4. The "clone your own voice" cell uploads a short reference recording and synthesizes whatever target text you give it.
+
+### Tips
+
+- Always pass `--speaker_prompt_text_transcription` for your reference audio if you have it — the script otherwise falls back to Whisper, which adds latency and can mis-hear domain terms.
+- Use manual 注音 hints inline for tricky polyphones: `"今天天氣真好[:ㄏㄠ3]"`. The upstream auto-annotator handles most cases on its own.
 
 ---
 
