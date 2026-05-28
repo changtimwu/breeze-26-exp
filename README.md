@@ -35,6 +35,7 @@ The notebook covers: runtime sanity check → clone → install → engine overr
 
 - macOS on Apple Silicon (M1/M2/M3/M4). The script aborts on any other platform — MLX is Metal-only.
 - `pip install -U mlx-whisper`
+- For `--mic` mode: `pip install sounddevice`, and grant your terminal Microphone access (System Settings → Privacy & Security → Microphone). The first run will trigger the macOS permission prompt.
 
 ### Run it
 
@@ -44,6 +45,8 @@ git clone https://github.com/thc1006/breeze-asr-taigi.git
 
 python mlx/test_mlx.py                       # uses breeze-asr-taigi/data/test.m4a
 python mlx/test_mlx.py path/to/audio.m4a    # your own file
+python mlx/test_mlx.py --mic                 # record from mic until Enter, then transcribe
+python mlx/test_mlx.py --mic --duration 10   # fixed 10s recording
 python mlx/test_mlx.py audio.m4a --fp16     # compare against the unquantized MLX model
 python mlx/test_mlx.py audio.m4a --word-timestamps
 ```
@@ -51,6 +54,7 @@ python mlx/test_mlx.py audio.m4a --word-timestamps
 Outputs land next to the input audio:
 - `<audio>.mlx.txt` — plain transcript
 - `<audio>.mlx.srt` — SubRip subtitles (skip with `--no-srt`)
+- `mic_YYYYMMDD_HHMMSS.wav` — the captured audio when using `--mic` (16 kHz mono)
 
 The script reports wall time and xRT, so 4-bit MLX numbers are directly comparable to the Faster-Whisper benchmarks in the upstream README.
 
