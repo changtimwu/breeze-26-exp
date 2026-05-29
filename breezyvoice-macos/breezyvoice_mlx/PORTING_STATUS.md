@@ -60,7 +60,7 @@ text ──[LLM]──▶ speech tokens ──[Flow]──▶ mel ──[HiFiGAN
 | weight converter | `tools/convert_weights.py` | — | — | ✅ scaffold (verify on hift.pt) |
 | Attention | `transformer/attention.py` | `transformer/attention.py` | EASY | ✅ **done + parity test** |
 | Conformer encoder | `transformer/encoder.py` (+embedding/subsampling/ffn/encoder_layer) | `transformer/encoder.py` | MEDIUM | ✅ **done + e2e parity test** |
-| LLM (AR loop) | `llm/llm.py` | `llm/llm.py` | MEDIUM | ⬜ stub |
+| LLM (AR loop) | `llm/llm.py` (+TransformerEncoder/forward_chunk) | `llm/llm.py` | MEDIUM | ✅ **done + greedy parity test** |
 | Flow wrapper | `flow/flow.py` | `flow/flow.py` | MEDIUM | ⬜ stub |
 | CFM ODE solver | `flow/flow_matching.py` | `flow/flow_matching.py` | EASY-MED | ⬜ stub |
 | UNet1D decoder | `flow/decoder.py` | `flow/decoder.py` | MEDIUM | ⬜ stub |
@@ -91,7 +91,9 @@ ports are a later optimization, not a blocker.
    confirm fused-weight-norm + conv-layout against a tiny PyTorch forward.
 3. **Phase 2 — transformer core**: `attention.py` → `encoder.py` (skip
    chunking/grad-ckpt; inference uses full context).
-4. **Phase 3 — LLM**: `llm/llm.py` AR decode loop + KV cache + top-k sampling.
+4. **Phase 3 — LLM** ✅ DONE: `llm/llm.py` TransformerLM (Conformer text encoder +
+   TransformerEncoder backbone + KV-cached AR decode + top-k/greedy sampling).
+   Greedy parity vs torch confirmed (identical 20-token sequence).
 5. **Phase 4 — flow**: `flow_matching.py` (Euler + CFG) → `decoder.py` (UNet1D,
    Matcha blocks) → `flow.py`.
 6. **Phase 5 — HiFiGAN** (hardest): ResBlock+Snake → NSF source → STFT/iSTFT
