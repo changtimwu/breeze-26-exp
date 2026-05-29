@@ -21,11 +21,48 @@ import re
 
 import numpy as np
 import mlx.core as mx
+import mlx.nn as nn
 
-from mlx_audio.codec.models.s3gen.hifigan import HiFTGenerator
+from mlx_audio.codec.models.s3gen.hifigan import HiFTGenerator as _MlxHiFTGenerator
 
 from ..nn.weight_norm import fuse_weight_norm
 from .f0_predictor import ConvRNNF0Predictor  # re-export
+
+
+class HiFTGenerator(_MlxHiFTGenerator):
+    """BreezyVoice HiFT vocoder.
+
+    Overrides mlx-audio-plus's decode() to fix a bug: the FINAL leaky_relu before
+    conv_post must use slope 0.01 (torch HiFTGenerator uses bare `F.leaky_relu(x)`,
+    default 0.01), not lrelu_slope (0.1). The upstream code used 0.1 there, which —
+    via the exp() magnitude path — produced ~6x too-loud, heavily-clipped audio.
+    With slope 0.01 the decode matches the torch source to ~4e-3 on real weights.
+    """
+
+    def decode(self, x: mx.array, s: mx.array) -> mx.array:
+        s_stft_real, s_stft_imag = self._stft(s.squeeze(1))
+        s_stft = mx.concatenate([s_stft_real, s_stft_imag], axis=1)
+
+        x = mx.swapaxes(self.conv_pre(mx.swapaxes(x, 1, 2)), 1, 2)
+        for i in range(self.num_upsamples):
+            x = nn.leaky_relu(x, negative_slope=self.lrelu_slope)
+            x = mx.swapaxes(self.ups[i](mx.swapaxes(x, 1, 2)), 1, 2)
+            if i == self.num_upsamples - 1:
+                x = mx.concatenate([x[:, :, 1:2], x], axis=2)
+            si = mx.swapaxes(self.source_downs[i](mx.swapaxes(s_stft, 1, 2)), 1, 2)
+            si = self.source_resblocks[i](si)
+            x = x + si
+            start = i * self.num_kernels
+            x = mx.mean(mx.stack([self.resblocks[start + j](x)
+                                  for j in range(self.num_kernels)], axis=0), axis=0)
+
+        x = nn.leaky_relu(x, negative_slope=0.01)  # FINAL: torch F.leaky_relu default
+        x = mx.swapaxes(self.conv_post(mx.swapaxes(x, 1, 2)), 1, 2)
+        half = self.istft_params["n_fft"] // 2 + 1
+        magnitude = mx.exp(x[:, :half, :])
+        phase = mx.sin(x[:, half:, :])
+        x = self._istft(magnitude, phase)
+        return mx.clip(x, -self.audio_limit, self.audio_limit)
 
 
 def _is_conv_transpose(key: str) -> bool:
