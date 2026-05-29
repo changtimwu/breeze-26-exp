@@ -30,8 +30,36 @@ class LinearNoSubsampling(nn.Module):
         self.right_context = 0
         self.subsampling_rate = 1
 
+    def position_encoding(self, size: int) -> mx.array:
+        return self.pos_enc.position_encoding(size)
+
     def __call__(self, x: mx.array, x_mask: mx.array, offset: int = 0
                  ) -> Tuple[mx.array, mx.array, mx.array]:
         x = self.out[1](self.out[0](x))   # Linear -> LayerNorm (Dropout is no-op at eval)
+        x, pos_emb = self.pos_enc(x, offset)
+        return x, pos_emb, x_mask
+
+
+class LegacyLinearNoSubsampling(nn.Module):
+    """Linear input layer for the LLM backbone (input_layer='linear_legacy').
+    Sequential(Linear, LayerNorm, Dropout, ReLU) — one extra ReLU vs
+    LinearNoSubsampling. MLX port of the torch source class.
+    """
+
+    def __init__(self, idim: int, odim: int, dropout_rate: float,
+                 pos_enc: EspnetRelPositionalEncoding):
+        super().__init__()
+        # out.0=Linear, out.1=LayerNorm (out.2=Dropout, out.3=ReLU have no params)
+        self.out = [nn.Linear(idim, odim), nn.LayerNorm(odim, eps=1e-5)]
+        self.pos_enc = pos_enc
+        self.right_context = 0
+        self.subsampling_rate = 1
+
+    def position_encoding(self, size: int) -> mx.array:
+        return self.pos_enc.position_encoding(size)
+
+    def __call__(self, x: mx.array, x_mask: mx.array, offset: int = 0
+                 ) -> Tuple[mx.array, mx.array, mx.array]:
+        x = nn.relu(self.out[1](self.out[0](x)))   # Linear -> LayerNorm -> ReLU
         x, pos_emb = self.pos_enc(x, offset)
         return x, pos_emb, x_mask
