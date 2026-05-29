@@ -64,7 +64,7 @@ text ──[LLM]──▶ speech tokens ──[Flow]──▶ mel ──[HiFiGAN
 | Flow wrapper | `flow/flow.py` | `flow/flow.py` | MEDIUM | ✅ **done + e2e flow parity** |
 | CFM ODE solver | `flow/flow_matching.py` | `flow/flow_matching.py` | EASY-MED | ✅ **done + parity test** |
 | UNet1D decoder | `flow/decoder.py` | `flow/decoder.py` | MEDIUM | ✅ **done + parity test** |
-| HiFiGAN-NSF | `hifigan/generator.py` | `hifigan/generator.py` | HARD | ✅ **done (per-component parity + smoke)** |
+| HiFiGAN-NSF | `hifigan/generator.py` | `hifigan/generator.py` | HARD | ✅ **done — full decode parity vs torch (rel_l2 ~0.003 on real weights)** |
 | F0 predictor | `hifigan/f0_predictor.py` | `hifigan/f0_predictor.py` | MEDIUM | ✅ **done + parity test** |
 | Orchestrator | `model.py` | `cli/model.py` | EASY | ✅ **done** |
 | High-level API | `cosyvoice.py` | `cli/cosyvoice.py` | EASY | ✅ **done (build + SFT/zero-shot-builtin)** |
