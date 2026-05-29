@@ -35,6 +35,25 @@ tests/test_weight_norm.py ✅ parity vs PyTorch
     --pt /path/to/BreezyVoice-model/hift.pt --out hift.safetensors
 ```
 
+## End-to-end (Phase 6 — runs on real weights)
+
+```bash
+# 1. convert MediaTek-Research/BreezyVoice .pt checkpoints -> MLX safetensors
+.venv/bin/python breezyvoice_mlx/tools/convert_breezyvoice.py --out-dir converted_mlx
+
+# 2. synthesize (built-in speaker, zero-shot conditioning from spk2info)
+PYTHONPATH=breezyvoice_mlx .venv/bin/python breezyvoice_mlx/tools/run_sft.py \
+    --weights converted_mlx --spk 中文女 \
+    --text "歡迎使用聯發創新基地 BreezyVoice 模型。" --out out.wav
+```
+
+Status: the full MLX pipeline (LLM → flow → HiFiGAN) runs end-to-end on real
+weights and produces speech. Known issue: ~9% sample clipping in the vocoder
+(strided-conv/ConvTranspose fp32 drift amplified by the exp() magnitude path) —
+a quality refinement, see PORTING_STATUS.md. Arbitrary-prompt zero-shot (own
+reference audio) additionally needs the ONNX speech tokenizer + CAM++ on CPU
+(`frontend.py`, optional).
+
 ## Strategy in one line
 Reference the already-working **CosyVoice3-MLX** (`mlx-audio-plus`) for patterns,
 port BreezyVoice's *own* CosyVoice2 modules (different LLM/flow lineage), reuse the

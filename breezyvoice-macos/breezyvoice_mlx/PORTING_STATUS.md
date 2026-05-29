@@ -66,8 +66,11 @@ text ──[LLM]──▶ speech tokens ──[Flow]──▶ mel ──[HiFiGAN
 | UNet1D decoder | `flow/decoder.py` | `flow/decoder.py` | MEDIUM | ✅ **done + parity test** |
 | HiFiGAN-NSF | `hifigan/generator.py` | `hifigan/generator.py` | HARD | ✅ **done (per-component parity + smoke)** |
 | F0 predictor | `hifigan/f0_predictor.py` | `hifigan/f0_predictor.py` | MEDIUM | ✅ **done + parity test** |
-| Frontend adapter | `frontend.py` | `cli/frontend.py` | EASY* | ⬜ stub |
-| Orchestrator | `model.py` | `cli/model.py` | EASY | ⬜ stub |
+| Orchestrator | `model.py` | `cli/model.py` | EASY | ✅ **done** |
+| High-level API | `cosyvoice.py` | `cli/cosyvoice.py` | EASY | ✅ **done (build + SFT/zero-shot-builtin)** |
+| Weight converter | `tools/convert_breezyvoice.py` | — | MEDIUM | ✅ **done (real llm/flow/hift.pt → MLX)** |
+| End-to-end run | `tools/run_sft.py` | — | — | ✅ **runs on real weights → wav** |
+| Frontend adapter (arbitrary prompt audio) | `frontend.py` | `cli/frontend.py` | EASY* | ⬜ optional (reuse ONNX on CPU) |
 
 \* Frontend is easy because the ONNX models (campplus, speech_tokenizer) already
 run on CPU via onnxruntime on macOS — **reuse them as-is in Phase 1**; MLX-native
