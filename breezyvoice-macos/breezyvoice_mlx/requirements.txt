@@ -1,0 +1,6 @@
+# BreezyVoice-MLX (Apple Silicon). Python >= 3.10.
+mlx>=0.20
+safetensors
+numpy
+# For weight conversion + Phase-1 frontend reuse (already in the BreezyVoice venv):
+#   torch, torchaudio, onnxruntime, openai-whisper, hyperpyyaml, WeTextProcessing, inflect
