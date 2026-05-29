@@ -100,8 +100,19 @@ fi
 
 # ---- 4. Install requirements -------------------------------------------------
 
+# openai-whisper==20231117 ships a legacy setup.py that imports pkg_resources
+# without declaring setuptools as a build dependency. uv's isolated build
+# fails with ModuleNotFoundError: No module named 'pkg_resources'. Seed
+# setuptools/wheel into the venv first, then install requirements with build
+# isolation disabled just for that one package — everything else still gets
+# clean isolated builds.
+say "seeding setuptools/wheel for legacy setup.py builds"
+uv pip install --python "$VENV_DIR/bin/python" setuptools wheel
+
 say "installing requirements (this takes a few minutes)"
-uv pip install --python "$VENV_DIR/bin/python" -r "$SCRIPT_DIR/requirements-macos.txt"
+uv pip install --python "$VENV_DIR/bin/python" \
+    --no-build-isolation-package openai-whisper \
+    -r "$SCRIPT_DIR/requirements-macos.txt"
 
 # Install BreezyVoice's Matcha-TTS third-party as importable (single_inference
 # already prepends its path to sys.path, so no -e install is required).
