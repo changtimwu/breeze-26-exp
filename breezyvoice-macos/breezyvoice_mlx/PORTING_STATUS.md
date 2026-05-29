@@ -58,8 +58,8 @@ text ──[LLM]──▶ speech tokens ──[Flow]──▶ mel ──[HiFiGAN
 |---|---|---|---|---|
 | weight_norm fuse/layer | `nn/weight_norm.py` | (MLX gap) | — | ✅ **done + parity test** |
 | weight converter | `tools/convert_weights.py` | — | — | ✅ scaffold (verify on hift.pt) |
-| Attention | `transformer/attention.py` | `transformer/attention.py` | EASY | ⬜ stub |
-| Conformer encoder | `transformer/encoder.py` | `transformer/encoder.py` | MEDIUM | ⬜ stub |
+| Attention | `transformer/attention.py` | `transformer/attention.py` | EASY | ✅ **done + parity test** |
+| Conformer encoder | `transformer/encoder.py` (+embedding/subsampling/ffn/encoder_layer) | `transformer/encoder.py` | MEDIUM | ✅ **done + e2e parity test** |
 | LLM (AR loop) | `llm/llm.py` | `llm/llm.py` | MEDIUM | ⬜ stub |
 | Flow wrapper | `flow/flow.py` | `flow/flow.py` | MEDIUM | ⬜ stub |
 | CFM ODE solver | `flow/flow_matching.py` | `flow/flow_matching.py` | EASY-MED | ⬜ stub |
