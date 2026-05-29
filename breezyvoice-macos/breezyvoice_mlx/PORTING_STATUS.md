@@ -61,9 +61,9 @@ text ──[LLM]──▶ speech tokens ──[Flow]──▶ mel ──[HiFiGAN
 | Attention | `transformer/attention.py` | `transformer/attention.py` | EASY | ✅ **done + parity test** |
 | Conformer encoder | `transformer/encoder.py` (+embedding/subsampling/ffn/encoder_layer) | `transformer/encoder.py` | MEDIUM | ✅ **done + e2e parity test** |
 | LLM (AR loop) | `llm/llm.py` (+TransformerEncoder/forward_chunk) | `llm/llm.py` | MEDIUM | ✅ **done + greedy parity test** |
-| Flow wrapper | `flow/flow.py` | `flow/flow.py` | MEDIUM | ⬜ stub |
-| CFM ODE solver | `flow/flow_matching.py` | `flow/flow_matching.py` | EASY-MED | ⬜ stub |
-| UNet1D decoder | `flow/decoder.py` | `flow/decoder.py` | MEDIUM | ⬜ stub |
+| Flow wrapper | `flow/flow.py` | `flow/flow.py` | MEDIUM | ✅ **done + e2e flow parity** |
+| CFM ODE solver | `flow/flow_matching.py` | `flow/flow_matching.py` | EASY-MED | ✅ **done + parity test** |
+| UNet1D decoder | `flow/decoder.py` | `flow/decoder.py` | MEDIUM | ✅ **done + parity test** |
 | HiFiGAN-NSF | `hifigan/generator.py` | `hifigan/generator.py` | HARD | ⬜ stub |
 | F0 predictor | `hifigan/f0_predictor.py` | `hifigan/f0_predictor.py` | MEDIUM | ⬜ stub |
 | Frontend adapter | `frontend.py` | `cli/frontend.py` | EASY* | ⬜ stub |
@@ -94,8 +94,12 @@ ports are a later optimization, not a blocker.
 4. **Phase 3 — LLM** ✅ DONE: `llm/llm.py` TransformerLM (Conformer text encoder +
    TransformerEncoder backbone + KV-cached AR decode + top-k/greedy sampling).
    Greedy parity vs torch confirmed (identical 20-token sequence).
-5. **Phase 4 — flow**: `flow_matching.py` (Euler + CFG) → `decoder.py` (UNet1D,
-   Matcha blocks) → `flow.py`.
+5. **Phase 4 — flow** ✅ DONE: `flow_matching.py` (Euler+CFG), `length_regulator.py`,
+   `decoder.py` (UNet1D Matcha estimator), `flow.py` (MaskedDiffWithXvec). Full
+   token->mel parity vs torch confirmed. Note: mlx-audio-plus's non-causal Block1D
+   has a GroupNorm-layout bug, so the decoder conv/norm blocks are reimplemented
+   here (the verified BasicTransformerBlock is reused). Decoder checkpoint keys are
+   "sanitized" -> use flow/decoder.py remap_decoder_weights in the converter.
 6. **Phase 5 — HiFiGAN** (hardest): ResBlock+Snake → NSF source → STFT/iSTFT
    (manual framing + Hann window + rfft/overlap-add) → assemble.
 7. **Phase 6 — integration**: `frontend.py` adapter (reuse ONNX on CPU) + `model.py`
