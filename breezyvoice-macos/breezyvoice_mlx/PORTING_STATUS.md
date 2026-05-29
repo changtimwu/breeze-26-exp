@@ -70,6 +70,7 @@ text ──[LLM]──▶ speech tokens ──[Flow]──▶ mel ──[HiFiGAN
 | High-level API | `cosyvoice.py` | `cli/cosyvoice.py` | EASY | ✅ **done (build + SFT/zero-shot-builtin)** |
 | Weight converter | `tools/convert_breezyvoice.py` | — | MEDIUM | ✅ **done (real llm/flow/hift.pt → MLX)** |
 | End-to-end run | `tools/run_sft.py` | — | — | ✅ **runs on real weights → wav** |
+| Quantization (LLM 4/8-bit) | `quantize.py`, converter `--quantize --bits`, `tools/ab_quant.py` | — | — | ✅ **8-bit near-lossless (top-1 99.6%, 940MB); 4-bit lossy (84.3%, 801MB)** |
 | Frontend adapter (arbitrary prompt audio) | `frontend.py` | `cli/frontend.py` | EASY* | ⬜ optional (reuse ONNX on CPU) |
 
 \* Frontend is easy because the ONNX models (campplus, speech_tokenizer) already

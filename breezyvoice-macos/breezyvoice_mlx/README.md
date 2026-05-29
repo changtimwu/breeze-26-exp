@@ -47,7 +47,29 @@ PYTHONPATH=breezyvoice_mlx .venv/bin/python breezyvoice_mlx/tools/run_sft.py \
     --text "歡迎使用聯發創新基地 BreezyVoice 模型。" --out out.wav
 ```
 
-Status: the full MLX pipeline (LLM → flow → HiFiGAN) runs end-to-end on real
+### Quantization (LLM Linear layers; flow/vocoder stay fp32)
+
+```bash
+python breezyvoice_mlx/tools/convert_breezyvoice.py --out-dir converted_q8 --quantize --bits 8
+# run_sft / BreezyVoice auto-detect quant_config.json and load quantized
+```
+
+A/B vs fp32 (LLM logit fidelity, teacher-forced; total = llm+flow+hift on disk):
+
+| precision | total disk | top-1 | top-5 | softmax cosine |
+|---|---|---|---|---|
+| fp32 | 1744 MB | — | — | — |
+| **8-bit (recommended)** | **940 MB** | **99.6%** | 99.3% | **100.0%** |
+| 4-bit | 801 MB | 84.3% | 86.1% | 97.0% |
+
+**8-bit is near-lossless** and 1.85× smaller. 4-bit is noticeably lossy and only
+saves ~140 MB more (flow+vocoder fp32 dominate the rest), so 8-bit is the default
+recommendation. NOTE: greedy decode degenerates this model (it's sampling-trained),
+so quality is measured by logit fidelity, not token argmax.
+
+### Status
+
+The full MLX pipeline (LLM → flow → HiFiGAN) runs end-to-end on real
 weights and produces speech. Known issue: ~9% sample clipping in the vocoder
 (strided-conv/ConvTranspose fp32 drift amplified by the exp() magnitude path) —
 a quality refinement, see PORTING_STATUS.md. Arbitrary-prompt zero-shot (own
