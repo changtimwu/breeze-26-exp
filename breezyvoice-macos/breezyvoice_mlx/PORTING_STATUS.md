@@ -64,8 +64,8 @@ text ──[LLM]──▶ speech tokens ──[Flow]──▶ mel ──[HiFiGAN
 | Flow wrapper | `flow/flow.py` | `flow/flow.py` | MEDIUM | ✅ **done + e2e flow parity** |
 | CFM ODE solver | `flow/flow_matching.py` | `flow/flow_matching.py` | EASY-MED | ✅ **done + parity test** |
 | UNet1D decoder | `flow/decoder.py` | `flow/decoder.py` | MEDIUM | ✅ **done + parity test** |
-| HiFiGAN-NSF | `hifigan/generator.py` | `hifigan/generator.py` | HARD | ⬜ stub |
-| F0 predictor | `hifigan/f0_predictor.py` | `hifigan/f0_predictor.py` | MEDIUM | ⬜ stub |
+| HiFiGAN-NSF | `hifigan/generator.py` | `hifigan/generator.py` | HARD | ✅ **done (per-component parity + smoke)** |
+| F0 predictor | `hifigan/f0_predictor.py` | `hifigan/f0_predictor.py` | MEDIUM | ✅ **done + parity test** |
 | Frontend adapter | `frontend.py` | `cli/frontend.py` | EASY* | ⬜ stub |
 | Orchestrator | `model.py` | `cli/model.py` | EASY | ⬜ stub |
 
@@ -100,7 +100,13 @@ ports are a later optimization, not a blocker.
    has a GroupNorm-layout bug, so the decoder conv/norm blocks are reimplemented
    here (the verified BasicTransformerBlock is reused). Decoder checkpoint keys are
    "sanitized" -> use flow/decoder.py remap_decoder_weights in the converter.
-6. **Phase 5 — HiFiGAN** (hardest): ResBlock+Snake → NSF source → STFT/iSTFT
+6. **Phase 5 — HiFiGAN** ✅ DONE: HiFTGenerator (NSF source + STFT/iSTFT + Snake
+   ResBlocks) + ConvRNNF0Predictor, reusing mlx-audio-plus's verified HiFTGenerator
+   (identical config) with remap_hift_weights (weight_norm fuse + conv layout + F0
+   index collapse). F0 + ResBlock exact parity; STFT/iSTFT/Snake/dilated-conv exact;
+   full generator smoke-tested. Strided Conv1d/ConvTranspose1d have ~1e-3 MLX fp32
+   drift (correct layout). NSF SineGen is stochastic by design.
+   (legacy notes:)
    (manual framing + Hann window + rfft/overlap-add) → assemble.
 7. **Phase 6 — integration**: `frontend.py` adapter (reuse ONNX on CPU) + `model.py`
    + `cosyvoice.py` API; validate numerically vs PyTorch on a fixed seed.
