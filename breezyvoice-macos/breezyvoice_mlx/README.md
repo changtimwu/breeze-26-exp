@@ -67,6 +67,16 @@ saves ~140 MB more (flow+vocoder fp32 dominate the rest), so 8-bit is the defaul
 recommendation. NOTE: greedy decode degenerates this model (it's sampling-trained),
 so quality is measured by logit fidelity, not token argmax.
 
+### Packaging
+
+```bash
+python breezyvoice_mlx/tools/package_model.py --weights-dir converted_q8 \
+    --out dist/BreezyVoice-300M-MLX-8bit
+```
+Assembles a self-contained model dir (weights + `quant_config.json` + `spk2info.pt`,
+hard-linked) and writes a generated `MODEL_CARD.md` (lineage, precision, speakers,
+usage, fidelity, license). Load it directly: `BreezyVoice(model_dir=DIR, weights_dir=DIR)`.
+
 ### Status
 
 The full MLX pipeline (LLM → flow → HiFiGAN) runs end-to-end on real
