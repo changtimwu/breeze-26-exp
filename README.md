@@ -18,6 +18,7 @@ Evaluation scratchpad for MediaTek Research's Breeze family of Taiwanese speech 
 | [`mlx/web/`](./mlx/web/) | ASR (browser → backend) | Apple Silicon + any modern browser | FastAPI + WebSocket + webrtcvad, same MLX model |
 | [`breezyvoice_colab.ipynb`](./breezyvoice_colab.ipynb) | TTS / voice cloning | Google Colab (Linux + NVIDIA T4) | BreezyVoice (CosyVoice-derived) — [`MediaTek-Research/BreezyVoice`](https://huggingface.co/MediaTek-Research/BreezyVoice) |
 | [`breezyvoice-macos/`](./breezyvoice-macos/) | TTS / voice cloning | macOS Apple Silicon (PyTorch MPS) | Same BreezyVoice model, native — no Colab needed |
+| [`breezyvoice-macos/breezyvoice_mlx/`](./breezyvoice-macos/breezyvoice_mlx/) | TTS / voice cloning | macOS Apple Silicon (MLX, native) | BreezyVoice ported to **MLX** — parity-tested vs PyTorch, 4/8-bit LLM quant ([PR #4](https://github.com/changtimwu/breeze-26-exp/pull/4)) |
 
 ---
 
@@ -149,6 +150,21 @@ Other tweaks:
 
 - Always pass `--speaker_prompt_text_transcription` for your reference audio if you have it — the script otherwise falls back to Whisper, which adds latency and can mis-hear domain terms.
 - Use manual 注音 hints inline for tricky polyphones: `"今天天氣真好[:ㄏㄠ3]"`. The upstream auto-annotator handles most cases on its own.
+
+---
+
+## 5. BreezyVoice → MLX port — `breezyvoice-macos/breezyvoice_mlx/`
+
+A from-scratch Apple **MLX** port of BreezyVoice (Taiwanese *Mandarin* TTS — not Taigi), built stage-by-stage with PyTorch-parity tests. Replaces the CUDA/PyTorch path with MLX so the whole pipeline (Conformer LLM → flow matching → HiFiGAN-NSF vocoder) runs natively on Apple Silicon — with a real `.pt`→MLX weight converter, 4/8-bit LLM quantization, and a packaging step.
+
+**Status:** all three stages ported and parity-tested vs PyTorch (10 suites), runs end-to-end on the real `MediaTek-Research/BreezyVoice` weights; 8-bit LLM is near-lossless (~940 MB). See [PR #4](https://github.com/changtimwu/breeze-26-exp/pull/4) and [`breezyvoice_mlx/PORTING_STATUS.md`](./breezyvoice-macos/breezyvoice_mlx/PORTING_STATUS.md).
+
+```bash
+cd breezyvoice-macos
+python breezyvoice_mlx/tools/convert_breezyvoice.py --out-dir converted_q8 --quantize --bits 8
+PYTHONPATH=breezyvoice_mlx python breezyvoice_mlx/tools/run_sft.py \
+  --weights converted_q8 --spk 中文女 --text "今天天氣真好" --out out.wav
+```
 
 ---
 
