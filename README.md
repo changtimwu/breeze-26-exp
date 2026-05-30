@@ -2,8 +2,14 @@
 
 Evaluation scratchpad for MediaTek Research's Breeze family of Taiwanese speech models:
 
-- **Breeze-ASR-26** — Whisper-large-v2 fine-tune for Taiwanese Hokkien ASR (via [thc1006/breeze-asr-taigi](https://github.com/thc1006/breeze-asr-taigi)).
-- **BreezyVoice** — Voice-cloning TTS for Taiwanese Mandarin (via [mtkresearch/BreezyVoice](https://github.com/mtkresearch/BreezyVoice)).
+- **Breeze-ASR-26** — Whisper-large-v2 fine-tune for Taiwanese **Hokkien / Taigi** (台語) ASR (via [thc1006/breeze-asr-taigi](https://github.com/thc1006/breeze-asr-taigi)).
+- **BreezyVoice** — Voice-cloning TTS for Taiwanese **Mandarin** (台灣腔的普通話 / 台灣人講的中文) — **not** Taigi/Hokkien (via [mtkresearch/BreezyVoice](https://github.com/mtkresearch/BreezyVoice)).
+
+> ⚠️ **"Taiwanese" ≠ "Taiwanese Mandarin".** The open **BreezyVoice** does Taiwanese
+> *Mandarin* TTS — it does **not** speak 台語 / Hokkien. The Taigi TTS is a separate,
+> **unreleased** model — **BreezyVoice 26** (CosyVoice 2-based, Breeze 3 family);
+> only Breeze ASR 26 and Breeze Guard 26 were open-sourced. See
+> [issue #5](https://github.com/changtimwu/breeze-26-exp/issues/5).
 
 | Artifact | Task | Runtime | Engine / Model |
 |---|---|---|---|
