@@ -152,42 +152,6 @@ Other tweaks:
 
 ---
 
----
-
-## 5. BreezyVoice on macOS — `breezyvoice-macos/`
-
-PyTorch ships MPS support out of the box, so the official BreezyVoice code can run natively on Apple Silicon without going to Colab. This subdirectory holds a small bootstrap that handles the bits the upstream `install.sh` doesn't cover for macOS:
-
-- Clones `mtkresearch/BreezyVoice` next to the setup script (gitignored — not checked in).
-- Creates a Python 3.10 venv via `uv` (3.10 is the upstream-recommended Python; the venv keeps it isolated from the system Python).
-- Installs [`requirements-macos.txt`](./breezyvoice-macos/requirements-macos.txt) — derived from upstream with the `--extra-index-url cu118` line dropped, `onnxruntime` added for darwin, and the two linux-only ttsfrd wheels removed (the source has a clean `WeTextProcessing` fallback at `cosyvoice/cli/frontend.py:25`).
-- Patches three hardcoded `torch.device('cuda' if torch.cuda.is_available() else 'cpu')` lines in `cosyvoice/cli/model.py`, `cosyvoice/cli/frontend.py`, and `single_inference.py` to a tri-state `cuda > mps > cpu` selection. The patches are marker-comment guarded so re-running `setup.sh` is idempotent.
-
-### Run it
-
-```bash
-cd breezyvoice-macos
-./setup.sh                                  # one-time; ~5–10 min for pip install
-./run.sh                                    # synthesizes data/example.wav -> results/out.wav
-./run.sh --content_to_synthesize "今天天氣真好" --speaker_prompt_audio_path my_voice.wav
-```
-
-`run.sh` exports `PYTHONUTF8=1` (upstream requires it for non-ASCII CLI args) and `PYTORCH_ENABLE_MPS_FALLBACK=1` so any op without an MPS kernel falls back to CPU instead of raising `NotImplementedError`.
-
-### Prerequisites
-
-- macOS on Apple Silicon (M1/M2/M3/M4).
-- [Homebrew](https://brew.sh).
-- `brew install uv openfst`. The setup script installs both if missing — `openfst` is needed by `pynini` (transitive dep via `WeTextProcessing`).
-
-### Caveats
-
-- Some Matcha-TTS / flow-matching ops don't have MPS kernels and will silently fall back to CPU under `PYTORCH_ENABLE_MPS_FALLBACK=1`. End-to-end inference still works; xRT is comparable to or better than a Colab T4 in informal testing.
-- If the upstream BreezyVoice repo changes the three CUDA device-selection lines, the patch step will warn and skip — re-clone or adjust `setup.sh`'s `PATCH_OLD` string.
-- Model weights (`MediaTek-Research/BreezyVoice-300M`, ~few GB) download from Hugging Face on first `run.sh` invocation.
-
----
-
 ## Reference: upstream VRAM decision table
 
 From the project README, for context on what the auto-router would have picked:
