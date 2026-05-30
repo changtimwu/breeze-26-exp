@@ -82,7 +82,50 @@ def test_generator_smoke():
     print("OK: HiFTGenerator forward smoke (finite, correct length, clipped)")
 
 
+def test_decode_parity_realistic_mel():
+    """Full decode vs torch on a realistic (controlled-magnitude) mel + fixed
+    source. Guards the final-leaky_relu slope fix (slope 0.01, not lrelu_slope).
+    With a real-range mel the exp() path is well-behaved, so this matches tightly."""
+    tg = TorchHiFT(f0_predictor=TorchF0(in_channels=8, cond_channels=16), **CFG).eval()
+    mg = HiFTGenerator(f0_predictor=ConvRNNF0Predictor(in_channels=8, cond_channels=16), **CFG)
+    mg.load_weights(remap_hift_weights(dict(tg.state_dict())), strict=False)
+
+    T = 6
+    rng = np.random.default_rng(0)
+    # real mels are negative log-magnitudes (~N(-5, 2)); keeps exp() tame
+    mel = (rng.standard_normal((1, 8, T)).astype(np.float32) * 1.5 - 5.0)
+    ups = int(np.prod(CFG["upsample_rates"]) * CFG["istft_params"]["hop_len"])
+    s = rng.standard_normal((1, 1, T * ups)).astype(np.float32)
+
+    import torch.nn.functional as F
+    with torch.no_grad():
+        sr, si = tg._stft(torch.from_numpy(s).squeeze(1)); s_stft = torch.cat([sr, si], 1)
+        x = tg.conv_pre(torch.from_numpy(mel))
+        for i in range(tg.num_upsamples):
+            x = F.leaky_relu(x, tg.lrelu_slope); x = tg.ups[i](x)
+            if i == tg.num_upsamples - 1: x = tg.reflection_pad(x)
+            x = x + tg.source_resblocks[i](tg.source_downs[i](s_stft))
+            xs = None
+            for j in range(tg.num_kernels):
+                r = tg.resblocks[i * tg.num_kernels + j](x); xs = r if xs is None else xs + r
+            x = xs / tg.num_kernels
+        x = F.leaky_relu(x)  # default 0.01 — the correct final slope
+        x = tg.conv_post(x)
+        half = tg.istft_params["n_fft"] // 2 + 1
+        t_out = torch.clamp(tg._istft(torch.exp(x[:, :half]), torch.sin(x[:, half:])),
+                            -tg.audio_limit, tg.audio_limit).numpy().reshape(-1)
+
+    m_out = np.array(mg.decode(mx.array(mel), mx.array(s))).reshape(-1)
+    n = min(len(t_out), len(m_out))
+    rel = np.linalg.norm(m_out[:n] - t_out[:n]) / (np.linalg.norm(t_out[:n]) + 1e-9)
+    print(f"decode rel_l2={rel:.4f} t_rms={np.sqrt((t_out**2).mean()):.3f} "
+          f"m_rms={np.sqrt((m_out**2).mean()):.3f}")
+    assert rel < 0.05, f"decode diverged (slope fix regressed?): rel_l2={rel}"
+    print("OK: HiFTGenerator.decode parity (final-leaky_relu slope fix)")
+
+
 if __name__ == "__main__":
     test_resblock_parity()
     test_generator_smoke()
+    test_decode_parity_realistic_mel()
     print("HIFIGAN TESTS PASSED")

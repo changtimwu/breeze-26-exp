@@ -2,8 +2,14 @@
 
 Evaluation scratchpad for MediaTek Research's Breeze family of Taiwanese speech models:
 
-- **Breeze-ASR-26** — Whisper-large-v2 fine-tune for Taiwanese Hokkien ASR (via [thc1006/breeze-asr-taigi](https://github.com/thc1006/breeze-asr-taigi)).
-- **BreezyVoice** — Voice-cloning TTS for Taiwanese Mandarin (via [mtkresearch/BreezyVoice](https://github.com/mtkresearch/BreezyVoice)).
+- **Breeze-ASR-26** — Whisper-large-v2 fine-tune for Taiwanese **Hokkien / Taigi** (台語) ASR (via [thc1006/breeze-asr-taigi](https://github.com/thc1006/breeze-asr-taigi)).
+- **BreezyVoice** — Voice-cloning TTS for Taiwanese **Mandarin** (台灣腔的普通話 / 台灣人講的中文) — **not** Taigi/Hokkien (via [mtkresearch/BreezyVoice](https://github.com/mtkresearch/BreezyVoice)).
+
+> ⚠️ **"Taiwanese" ≠ "Taiwanese Mandarin".** The open **BreezyVoice** does Taiwanese
+> *Mandarin* TTS — it does **not** speak 台語 / Hokkien. The Taigi TTS is a separate,
+> **unreleased** model — **BreezyVoice 26** (CosyVoice 2-based, Breeze 3 family);
+> only Breeze ASR 26 and Breeze Guard 26 were open-sourced. See
+> [issue #5](https://github.com/changtimwu/breeze-26-exp/issues/5).
 
 | Artifact | Task | Runtime | Engine / Model |
 |---|---|---|---|
@@ -12,6 +18,7 @@ Evaluation scratchpad for MediaTek Research's Breeze family of Taiwanese speech 
 | [`mlx/web/`](./mlx/web/) | ASR (browser → backend) | Apple Silicon + any modern browser | FastAPI + WebSocket + webrtcvad, same MLX model |
 | [`breezyvoice_colab.ipynb`](./breezyvoice_colab.ipynb) | TTS / voice cloning | Google Colab (Linux + NVIDIA T4) | BreezyVoice (CosyVoice-derived) — [`MediaTek-Research/BreezyVoice`](https://huggingface.co/MediaTek-Research/BreezyVoice) |
 | [`breezyvoice-macos/`](./breezyvoice-macos/) | TTS / voice cloning | macOS Apple Silicon (PyTorch MPS) | Same BreezyVoice model, native — no Colab needed |
+| [`breezyvoice-macos/breezyvoice_mlx/`](./breezyvoice-macos/breezyvoice_mlx/) | TTS / voice cloning | macOS Apple Silicon (MLX, native) | BreezyVoice ported to **MLX** — parity-tested vs PyTorch, 4/8-bit LLM quant ([PR #4](https://github.com/changtimwu/breeze-26-exp/pull/4)) |
 
 ---
 
@@ -146,39 +153,18 @@ Other tweaks:
 
 ---
 
----
+## 5. BreezyVoice → MLX port — `breezyvoice-macos/breezyvoice_mlx/`
 
-## 5. BreezyVoice on macOS — `breezyvoice-macos/`
+A from-scratch Apple **MLX** port of BreezyVoice (Taiwanese *Mandarin* TTS — not Taigi), built stage-by-stage with PyTorch-parity tests. Replaces the CUDA/PyTorch path with MLX so the whole pipeline (Conformer LLM → flow matching → HiFiGAN-NSF vocoder) runs natively on Apple Silicon — with a real `.pt`→MLX weight converter, 4/8-bit LLM quantization, and a packaging step.
 
-PyTorch ships MPS support out of the box, so the official BreezyVoice code can run natively on Apple Silicon without going to Colab. This subdirectory holds a small bootstrap that handles the bits the upstream `install.sh` doesn't cover for macOS:
-
-- Clones `mtkresearch/BreezyVoice` next to the setup script (gitignored — not checked in).
-- Creates a Python 3.10 venv via `uv` (3.10 is the upstream-recommended Python; the venv keeps it isolated from the system Python).
-- Installs [`requirements-macos.txt`](./breezyvoice-macos/requirements-macos.txt) — derived from upstream with the `--extra-index-url cu118` line dropped, `onnxruntime` added for darwin, and the two linux-only ttsfrd wheels removed (the source has a clean `WeTextProcessing` fallback at `cosyvoice/cli/frontend.py:25`).
-- Patches three hardcoded `torch.device('cuda' if torch.cuda.is_available() else 'cpu')` lines in `cosyvoice/cli/model.py`, `cosyvoice/cli/frontend.py`, and `single_inference.py` to a tri-state `cuda > mps > cpu` selection. The patches are marker-comment guarded so re-running `setup.sh` is idempotent.
-
-### Run it
+**Status:** all three stages ported and parity-tested vs PyTorch (10 suites), runs end-to-end on the real `MediaTek-Research/BreezyVoice` weights; 8-bit LLM is near-lossless (~940 MB). See [PR #4](https://github.com/changtimwu/breeze-26-exp/pull/4) and [`breezyvoice_mlx/PORTING_STATUS.md`](./breezyvoice-macos/breezyvoice_mlx/PORTING_STATUS.md).
 
 ```bash
 cd breezyvoice-macos
-./setup.sh                                  # one-time; ~5–10 min for pip install
-./run.sh                                    # synthesizes data/example.wav -> results/out.wav
-./run.sh --content_to_synthesize "今天天氣真好" --speaker_prompt_audio_path my_voice.wav
+python breezyvoice_mlx/tools/convert_breezyvoice.py --out-dir converted_q8 --quantize --bits 8
+PYTHONPATH=breezyvoice_mlx python breezyvoice_mlx/tools/run_sft.py \
+  --weights converted_q8 --spk 中文女 --text "今天天氣真好" --out out.wav
 ```
-
-`run.sh` exports `PYTHONUTF8=1` (upstream requires it for non-ASCII CLI args) and `PYTORCH_ENABLE_MPS_FALLBACK=1` so any op without an MPS kernel falls back to CPU instead of raising `NotImplementedError`.
-
-### Prerequisites
-
-- macOS on Apple Silicon (M1/M2/M3/M4).
-- [Homebrew](https://brew.sh).
-- `brew install uv openfst`. The setup script installs both if missing — `openfst` is needed by `pynini` (transitive dep via `WeTextProcessing`).
-
-### Caveats
-
-- Some Matcha-TTS / flow-matching ops don't have MPS kernels and will silently fall back to CPU under `PYTORCH_ENABLE_MPS_FALLBACK=1`. End-to-end inference still works; xRT is comparable to or better than a Colab T4 in informal testing.
-- If the upstream BreezyVoice repo changes the three CUDA device-selection lines, the patch step will warn and skip — re-clone or adjust `setup.sh`'s `PATCH_OLD` string.
-- Model weights (`MediaTek-Research/BreezyVoice-300M`, ~few GB) download from Hugging Face on first `run.sh` invocation.
 
 ---
 

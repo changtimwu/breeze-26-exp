@@ -80,6 +80,10 @@ def main():
     ap.add_argument("--model-dir", default=None,
                     help="BreezyVoice model dir (default: resolve the HF repo)")
     ap.add_argument("--out-dir", required=True)
+    ap.add_argument("--quantize", action="store_true",
+                    help="quantize the LLM's Linear layers (flow/hift stay fp32)")
+    ap.add_argument("--bits", type=int, default=4, help="quantization bits (4 or 8)")
+    ap.add_argument("--group-size", type=int, default=64)
     args = ap.parse_args()
 
     model_dir = args.model_dir
@@ -88,15 +92,38 @@ def main():
         model_dir = snapshot_download("MediaTek-Research/BreezyVoice")
     os.makedirs(args.out_dir, exist_ok=True)
 
-    for name, conv in (("llm", convert_llm), ("flow", convert_flow), ("hift", convert_hift)):
+    # flow + hift: plain fp32 conversion
+    for name, conv in (("flow", convert_flow), ("hift", convert_hift)):
         src = os.path.join(model_dir, f"{name}.pt")
         print(f"[convert] {name}.pt ...")
         weights = dict(conv(_load(src)))
         dst = os.path.join(args.out_dir, f"{name}.safetensors")
         mx.save_safetensors(dst, weights)
         print(f"          -> {dst}  ({len(weights)} tensors)")
-    print("done. Also copy campplus.onnx, speech_tokenizer_v1.onnx, spk2info.pt, "
-          "cosyvoice.yaml for the frontend.")
+
+    # llm: fp32, or 4-bit quantized
+    print("[convert] llm.pt ...")
+    llm_weights = dict(convert_llm(_load(os.path.join(model_dir, "llm.pt"))))
+    if args.quantize:
+        import json
+        from mlx.utils import tree_flatten
+        from breezyvoice_mlx.cosyvoice import build_models
+        from breezyvoice_mlx.quantize import quantize_llm
+        m = build_models()
+        m.llm.load_weights(list(llm_weights.items()), strict=False)
+        quantize_llm(m.llm, args.bits, args.group_size)
+        qweights = dict(tree_flatten(m.llm.parameters()))
+        mx.save_safetensors(os.path.join(args.out_dir, "llm.safetensors"), qweights)
+        with open(os.path.join(args.out_dir, "quant_config.json"), "w") as f:
+            json.dump({"bits": args.bits, "group_size": args.group_size,
+                       "scope": "llm.Linear"}, f)
+        print(f"          -> llm.safetensors  ({len(qweights)} tensors, {args.bits}-bit Linear)")
+    else:
+        mx.save_safetensors(os.path.join(args.out_dir, "llm.safetensors"), llm_weights)
+        print(f"          -> llm.safetensors  ({len(llm_weights)} tensors, fp32)")
+
+    print("done. Also copy spk2info.pt (+ cosyvoice.yaml / ONNX models for the "
+          "arbitrary-prompt frontend).")
 
 
 if __name__ == "__main__":

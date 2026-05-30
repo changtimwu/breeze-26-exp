@@ -88,10 +88,20 @@ class BreezyVoice:
     SAMPLE_RATE = 22050
 
     def __init__(self, model_dir: str, weights_dir: str = None):
+        import json
         import torch
         self.model_dir = model_dir
         weights_dir = weights_dir or model_dir
         self.model = build_models()
+        # If the weights were 4-bit quantized, swap the LLM's Linear layers to
+        # QuantizedLinear *before* loading so shapes match.
+        qc_path = os.path.join(weights_dir, "quant_config.json")
+        self.quantized = os.path.exists(qc_path)
+        if self.quantized:
+            from .quantize import quantize_llm
+            with open(qc_path) as f:
+                qc = json.load(f)
+            quantize_llm(self.model.llm, qc["bits"], qc["group_size"])
         self.model.load(
             os.path.join(weights_dir, "llm.safetensors"),
             os.path.join(weights_dir, "flow.safetensors"),
@@ -126,10 +136,13 @@ class BreezyVoice:
                                    flow_embedding=emb, llm_embedding=emb)
         return out["tts_speech"]
 
-    def inference_zero_shot_builtin(self, text: str, spk_id: str) -> mx.array:
+    def inference_zero_shot_builtin(self, text: str, spk_id: str,
+                                    sampling_fn=None) -> mx.array:
         """Zero-shot using a built-in speaker's PRECOMPUTED prompt (embedding +
         speech_token + speech_feat from spk2info) — the intended conditioning, no
-        ONNX tokenizer / prompt audio needed. Returns (1, T) waveform."""
+        ONNX tokenizer / prompt audio needed. Returns (1, T) waveform.
+        Pass sampling_fn=greedy_sampling for deterministic (A/B-comparable) decode."""
+        from .llm.llm import top_k_sampling
         text_token, text_len = self._encode_text(text)
         e = self.spk2info[spk_id]
         emb = mx.array(np.asarray(e["embedding"], dtype=np.float32).reshape(1, -1))
@@ -141,5 +154,32 @@ class BreezyVoice:
             text=text_token, text_len=text_len, flow_embedding=emb, llm_embedding=emb,
             llm_prompt_speech_token=st, llm_prompt_speech_token_len=stl,
             flow_prompt_speech_token=st, flow_prompt_speech_token_len=stl,
-            prompt_speech_feat=feat, prompt_speech_feat_len=featl)
+            prompt_speech_feat=feat, prompt_speech_feat_len=featl,
+            sampling_fn=sampling_fn or top_k_sampling)
         return out["tts_speech"]
+
+    def llm_prompt_logits(self, text: str, spk_id: str) -> mx.array:
+        """Deterministic per-position LLM logits over the prompt (for quant A/B)."""
+        text_token, text_len = self._encode_text(text)
+        e = self.spk2info[spk_id]
+        emb = mx.array(np.asarray(e["embedding"], dtype=np.float32).reshape(1, -1))
+        st = mx.array(np.asarray(e["speech_token"]).astype(np.int32))
+        stl = mx.array([st.shape[1]], dtype=mx.int32)
+        return self.model.llm.prompt_logits(
+            text=text_token, text_len=text_len,
+            prompt_text=mx.zeros((1, 0), mx.int32), prompt_text_len=mx.zeros((1,), mx.int32),
+            prompt_speech_token=st, prompt_speech_token_len=stl, embedding=emb)
+
+    def llm_tokens(self, text: str, spk_id: str, sampling_fn=None) -> mx.array:
+        """Just the LLM stage (text -> speech tokens), for A/B comparisons."""
+        from .llm.llm import top_k_sampling
+        text_token, text_len = self._encode_text(text)
+        e = self.spk2info[spk_id]
+        emb = mx.array(np.asarray(e["embedding"], dtype=np.float32).reshape(1, -1))
+        st = mx.array(np.asarray(e["speech_token"]).astype(np.int32))
+        stl = mx.array([st.shape[1]], dtype=mx.int32)
+        return self.model.llm.inference(
+            text=text_token, text_len=text_len,
+            prompt_text=mx.zeros((1, 0), mx.int32), prompt_text_len=mx.zeros((1,), mx.int32),
+            prompt_speech_token=st, prompt_speech_token_len=stl, embedding=emb,
+            sampling_fn=sampling_fn or top_k_sampling)
