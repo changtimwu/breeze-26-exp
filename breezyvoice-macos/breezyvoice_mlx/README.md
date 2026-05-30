@@ -1,12 +1,20 @@
 # breezyvoice-mlx
 
-Apple **MLX** port of [BreezyVoice](../BreezyVoice) (a CosyVoice2-derived zero-shot
-TTS model), targeting Apple Silicon / macOS. Replaces the CUDA/PyTorch inference
-path with MLX.
+Apple **MLX** port of [BreezyVoice](https://huggingface.co/MediaTek-Research/BreezyVoice)
+(a CosyVoice-**v1**-derived zero-shot TTS model), targeting Apple Silicon / macOS.
+Replaces the CUDA/PyTorch inference path with MLX.
 
-> **Status: scaffold.** Structure, the `weight_norm` blocker (solved + tested), and
-> the PyTorch→MLX weight converter are in place. Model modules are faithful stubs.
-> See **[PORTING_STATUS.md](PORTING_STATUS.md)** for the module map and build order.
+> ⚠️ **Language — read this:** BreezyVoice synthesizes **Taiwanese *Mandarin***
+> (台灣腔的普通話 / 台灣人講的中文). It does **NOT** speak **Taiwanese Hokkien / Taigi**
+> (台語 / 閩南語). The Taigi TTS is a *different, newer, unreleased* model —
+> **BreezyVoice 26** (CosyVoice 2-based, Breeze 3 family); only Breeze ASR 26 and
+> Breeze Guard 26 were open-sourced. Feeding this model Hokkien-orthography text
+> yields a *Mandarin reading* of those characters, not Taigi pronunciation.
+> See [issue #5](https://github.com/changtimwu/breeze-26-exp/issues/5).
+
+> **Status:** the full pipeline (LLM → flow → HiFiGAN) is ported, parity-tested vs
+> PyTorch (10 suites), runs end-to-end on real weights, and supports 4/8-bit LLM
+> quantization + packaging. See **[PORTING_STATUS.md](PORTING_STATUS.md)**.
 > Research & divergence analysis: https://github.com/changtimwu/breeze-26-exp/issues/3
 
 ## Layout
@@ -14,14 +22,16 @@ path with MLX.
 ```
 breezyvoice_mlx/
   nn/weight_norm.py      ✅ weight_norm fuse + runtime layer (MLX has no built-in)
-  transformer/           ⬜ attention, Conformer encoder
-  llm/llm.py             ⬜ text -> speech tokens (AR loop)
-  flow/                  ⬜ flow matching (CFM solver + UNet1D decoder)
-  hifigan/               ⬜ HiFiGAN-NSF vocoder + F0 predictor
-  frontend.py            ⬜ adapter over the existing CPU/ONNX frontend
-  model.py               ⬜ llm -> flow -> hift orchestrator
-tools/convert_weights.py ✅ .pt -> MLX safetensors (fuses weight_norm, fixes conv layout)
-tests/test_weight_norm.py ✅ parity vs PyTorch
+  transformer/           ✅ attention + Conformer/Transformer encoder (parity-tested)
+  llm/llm.py             ✅ text -> speech tokens (AR loop, parity-tested)
+  flow/                  ✅ flow matching (CFM solver + UNet1D decoder, parity-tested)
+  hifigan/               ✅ HiFiGAN-NSF vocoder + F0 predictor (parity-tested)
+  cosyvoice.py           ✅ high-level API (build + SFT / zero-shot-builtin)
+  model.py               ✅ llm -> flow -> hift orchestrator
+  quantize.py            ✅ 4/8-bit LLM quantization
+tools/convert_breezyvoice.py ✅ real llm/flow/hift.pt -> MLX (+ --quantize)
+tools/{run_sft,package_model,ab_quant}.py ✅ synthesis / packaging / fidelity A/B
+tests/*.py               ✅ 10 PyTorch-parity suites
 ```
 
 ## Quick start
