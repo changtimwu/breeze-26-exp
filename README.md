@@ -331,7 +331,7 @@ Other tweaks:
 
 ---
 
-## 5. BreezyVoice → MLX port — `breezyvoice-macos/breezyvoice_mlx/`
+## 6. BreezyVoice → MLX port — `breezyvoice-macos/breezyvoice_mlx/`
 
 A from-scratch Apple **MLX** port of BreezyVoice (Taiwanese *Mandarin* TTS — not Taigi), built stage-by-stage with PyTorch-parity tests. Replaces the CUDA/PyTorch path with MLX so the whole pipeline (Conformer LLM → flow matching → HiFiGAN-NSF vocoder) runs natively on Apple Silicon — with a real `.pt`→MLX weight converter, 4/8-bit LLM quantization, and a packaging step.
 
