@@ -10,6 +10,7 @@ Evaluation scratchpad for MediaTek Research's Breeze family of Taiwanese speech 
 | [`breeze_asr_taigi_colab.ipynb`](./breeze_asr_taigi_colab.ipynb) | ASR | Google Colab (Linux + NVIDIA T4) | Faster-Whisper (CT2, `int8_float16`) — [`paulpengtw/faster-whisper-Breeze-ASR-26`](https://huggingface.co/paulpengtw/faster-whisper-Breeze-ASR-26) |
 | [`mlx/test_mlx.py`](./mlx/test_mlx.py) | ASR | Apple Silicon (Metal) | `mlx-whisper`, 4-bit — [`doggy8088/Breeze-ASR-26-MLX-4bit`](https://huggingface.co/doggy8088/Breeze-ASR-26-MLX-4bit) |
 | [`mlx/web/`](./mlx/web/) | ASR (browser → backend) | Apple Silicon + any modern browser | FastAPI + WebSocket + webrtcvad, same MLX model |
+| [`wcpp/`](./wcpp/) | ASR | Apple Silicon (Metal + Accelerate) | `whisper.cpp` / ggml, f16 + q8_0/q5_k/q4_k — converted here from the original weights |
 | [`breezyvoice_colab.ipynb`](./breezyvoice_colab.ipynb) | TTS / voice cloning | Google Colab (Linux + NVIDIA T4) | BreezyVoice (CosyVoice-derived) — [`MediaTek-Research/BreezyVoice`](https://huggingface.co/MediaTek-Research/BreezyVoice) |
 
 ---
@@ -119,7 +120,134 @@ Open the URL in any modern browser, click **Start**, allow microphone access, an
 
 ---
 
-## 4. BreezyVoice notebook — voice-cloning TTS on a T4
+## 4. whisper.cpp — ggml on Apple Silicon (`wcpp/`)
+
+Breeze-ASR-26 is a plain `whisper-large-v2` fine-tune, so whisper.cpp's HF→ggml
+converter takes it **unmodified**. This directory converts the original MediaTek
+weights ourselves rather than trusting a third-party repo, and measures the result
+against the unconverted fp32 checkpoint.
+
+```bash
+./wcpp/convert.sh                 # build whisper.cpp, convert, quantize
+wcpp/whisper.cpp/build/bin/whisper-cli -m wcpp/out/ggml-model.bin -l zh -f audio.wav -t 8
+```
+
+`-l zh` is mandatory: Whisper large-v2's `lang_to_id` has 99 entries and **`<|nan|>`
+does not exist**, so Taigi has to be decoded as Chinese.
+
+### Conversion is faithful
+
+The ggml header came out correct on every field — including `n_text_ctx = 448`,
+which the converter has to *infer*, because Breeze's `config.json` sets
+`"max_length": null` and the script falls back to `max_target_positions`. All
+**1259 of 1259** tensors were written; the only skipped entry is `proj_out.weight`,
+which is tied to the decoder token embedding and correctly dropped.
+
+Accuracy vs. the original fp32 checkpoint run through HuggingFace transformers
+(12 clips / 297 s, all engines pinned to *identical* greedy decoding so the numbers
+reflect weights rather than search strategy):
+
+| build | size | CER vs fp32 | median CER | exact match | xRT |
+|---|---|---|---|---|---|
+| ggml f16 | 2951 MB | **4.46 %** | **1.60 %** | 5/12 | 0.082 |
+| ggml q8_0 | 1579 MB | 4.88 % | 1.60 % | 5/12 | 0.076 |
+| ggml q5_k | 1030 MB | 7.67 % | 6.63 % | 1/12 | 0.076 |
+| ggml q4_k | 847 MB | 8.65 % | 7.72 % | 2/12 | **0.065** |
+| `mlx-whisper` 4-bit | 877 MB | 14.92 % | 14.41 % | 1/12 | — |
+
+f16 and q8_0 are indistinguishable from each other; q5_k/q4_k cost a few points of
+CER for a 3x size cut. The third-party MLX 4-bit model is roughly **3x the error**
+of our ggml f16 — a conversion-lineage difference as much as a quantization one.
+
+Residual f16-vs-fp32 disagreement is expected, not a defect: whisper.cpp computes
+its own mel spectrogram and runs f16 kernels, so on genuinely ambiguous audio the
+two implementations can land on different (equally plausible) transcripts. The four
+ggml variants agree closely with *each other* on exactly those clips.
+
+Also settled: whisper.cpp ignores `suppress_tokens` entirely (Breeze dropped it from
+`config.json`; only `generation_config.json` still carries the 88-token list) and it
+made **no observable difference** — 5 of 12 clips matched HuggingFace character for
+character anyway.
+
+### Acceleration on this box (M1 Max, 32 GB)
+
+Metal, Accelerate, and the ARM CPU extensions all engage — `whisper-cli` reports
+`MTL : EMBED_LIBRARY = 1 | CPU : NEON = 1 | ARM_FMA = 1 | FP16_VA = 1 | DOTPROD = 1 | ACCELERATE = 1`.
+Encoder time for one 30 s window, f16:
+
+| encoder backend | encode time | vs Metal |
+|---|---|---|
+| **Metal (GPU)** | **428 ms** | — |
+| Core ML (`-DWHISPER_COREML=1`) | 565 ms | 1.3x slower |
+| CPU only (`-ng`) | 2749 ms | 6.4x slower |
+
+So **Metal is the right backend here** — Core ML/ANE is a net loss for this model.
+Two caveats before concluding ANE is useless: the `.mlpackage` we built is fp32
+(`--quantize` untried), and upstream marks `--optimize-ane` as "currently broken".
+The first Core ML run also costs a one-time ~2.8 s ANE compile.
+
+Quantization is a **footprint win, not a throughput win** — q4_k cuts the model 3.5x
+and load time from 915 ms to 321 ms, but encode time barely moves, because
+dequantization eats what the smaller weights save.
+
+### Word timestamps work — with three non-obvious flags
+
+Breeze inherited large-v2's DTW alignment heads *unchanged*: its 23 pairs in
+`generation_config.json` are byte-identical to whisper.cpp's `g_aheads_large_v2`.
+So `--dtw large.v2` is valid. But:
+
+```bash
+whisper-cli -m wcpp/out/ggml-model.bin -l zh --dtw large.v2 \
+  -nfa -bs 1 -ml 1 -oj -of out audio.wav
+```
+
+- **`-nfa` is required.** Flash attention is on by default and silently disables DTW
+  (`dtw_token_timestamps is not supported with flash_attn - disabling`).
+- **Beam search must be off.** With the default `-bs 5`, DTW emits *zero* segments.
+- Read the **JSON** (`-oj`), not stdout — the terminal rendering duplicates and
+  reverses tokens even though the underlying data is fine.
+
+Verified: 118 monotonically increasing token spans covering 0.000–30.000 s.
+
+### The repetition loops are the model, not the port
+
+`mlx/mic_20260528_231037_session.mlx.txt` opens with a degenerate `奶奶奶奶…` loop, and
+it was an open question whether 4-bit quantization caused it. It did not — **the
+original fp32 checkpoint loops on the same audio** (`妳... 妳...` x140, `師兄` x90) once
+temperature fallback is disabled. It is ordinary Whisper degeneracy on hard Taigi
+audio, and Whisper's `compression_ratio > 2.4` retry exists precisely for it.
+
+What differs is how well each engine's *default* decoder recovers. On the three
+degenerate clips, with each engine left at its own defaults:
+
+- **whisper.cpp** (beam 5 + entropy/temperature fallback) recovered **all three** into
+  coherent dialogue.
+- **mlx-whisper** (greedy + temperature ladder) still looped on **two of three**.
+
+That is a practical argument for the ggml path in the streaming app, independent of
+raw accuracy.
+
+### Files
+
+- [`wcpp/convert.sh`](./wcpp/convert.sh) — build + convert + quantize, end to end
+- [`wcpp/compare.py`](./wcpp/compare.py) — cross-engine CER harness with decoding pinned
+- [`wcpp/hf_oracle.py`](./wcpp/hf_oracle.py) — fp32 reference via transformers
+
+### Toolchain notes (both unrelated to the model)
+
+- CMake picks Homebrew's clang, which cannot find the macOS C++ stdlib. Force
+  `/usr/bin/clang++`.
+- On this box `/Library/Developer/CommandLineTools/usr/include/c++/v1` was a **stale
+  2022 leftover** with 11 entries and no `<array>`. Clang searches it first, fails, and
+  never falls back to the SDK's complete copy. `convert.sh` detects this and adds
+  `-isystem` on the SDK's libc++; the real fix is reinstalling the Command Line Tools.
+- Full Xcode is **not** required. `GGML_METAL_EMBED_LIBRARY=ON` compiles Metal shaders
+  at runtime instead of needing `xcrun metal`, and `coremltools.models.utils.compile_model()`
+  produces the `.mlmodelc` that `xcrun coremlc` would otherwise be needed for.
+
+---
+
+## 5. BreezyVoice notebook — voice-cloning TTS on a T4
 
 [`breezyvoice_colab.ipynb`](./breezyvoice_colab.ipynb) drives `single_inference.py` from the BreezyVoice repo to clone a speaker's voice and synthesize Taiwanese Mandarin text.
 

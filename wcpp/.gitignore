@@ -1,0 +1,7 @@
+# Build/conversion artifacts — multi-GB, all reproducible via convert.sh
+whisper.cpp/
+whisper-assets/
+out/
+audio/
+coreml-venv/
+__pycache__/
