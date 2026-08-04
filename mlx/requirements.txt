@@ -1,0 +1,4 @@
+sounddevice
+mlx-whisper
+webrtcvad
+#fastapi 'uvicorn[standard]'
