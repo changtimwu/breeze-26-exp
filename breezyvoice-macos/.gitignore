@@ -1,0 +1,16 @@
+# The upstream BreezyVoice clone — setup.sh fetches it; not checked in.
+BreezyVoice/
+
+# venv
+.venv/
+
+# python
+__pycache__/
+*.pyc
+
+# sed backups, if any patch tools drop them
+*.bak
+
+# local model / output caches if anyone runs from this dir directly
+results/
+pretrained_models/

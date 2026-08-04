@@ -2,8 +2,14 @@
 
 Evaluation scratchpad for MediaTek Research's Breeze family of Taiwanese speech models:
 
-- **Breeze-ASR-26** — Whisper-large-v2 fine-tune for Taiwanese Hokkien ASR (via [thc1006/breeze-asr-taigi](https://github.com/thc1006/breeze-asr-taigi)).
-- **BreezyVoice** — Voice-cloning TTS for Taiwanese Mandarin (via [mtkresearch/BreezyVoice](https://github.com/mtkresearch/BreezyVoice)).
+- **Breeze-ASR-26** — Whisper-large-v2 fine-tune for Taiwanese **Hokkien / Taigi** (台語) ASR (via [thc1006/breeze-asr-taigi](https://github.com/thc1006/breeze-asr-taigi)).
+- **BreezyVoice** — Voice-cloning TTS for Taiwanese **Mandarin** (台灣腔的普通話 / 台灣人講的中文) — **not** Taigi/Hokkien (via [mtkresearch/BreezyVoice](https://github.com/mtkresearch/BreezyVoice)).
+
+> ⚠️ **"Taiwanese" ≠ "Taiwanese Mandarin".** The open **BreezyVoice** does Taiwanese
+> *Mandarin* TTS — it does **not** speak 台語 / Hokkien. The Taigi TTS is a separate,
+> **unreleased** model — **BreezyVoice 26** (CosyVoice 2-based, Breeze 3 family);
+> only Breeze ASR 26 and Breeze Guard 26 were open-sourced. See
+> [issue #5](https://github.com/changtimwu/breeze-26-exp/issues/5).
 
 | Artifact | Task | Runtime | Engine / Model |
 |---|---|---|---|
@@ -13,6 +19,8 @@ Evaluation scratchpad for MediaTek Research's Breeze family of Taiwanese speech 
 | [`wcpp/`](./wcpp/) | ASR | Apple Silicon (Metal + Accelerate) | `whisper.cpp` / ggml, f16 + q8_0/q5_k/q4_k — converted here from the original weights |
 | [`wcpp/web/`](./wcpp/web/) | ASR (browser → backend) | Apple Silicon + any modern browser | FastAPI + WebSocket + webrtcvad → `whisper-server`, live quantization switch |
 | [`breezyvoice_colab.ipynb`](./breezyvoice_colab.ipynb) | TTS / voice cloning | Google Colab (Linux + NVIDIA T4) | BreezyVoice (CosyVoice-derived) — [`MediaTek-Research/BreezyVoice`](https://huggingface.co/MediaTek-Research/BreezyVoice) |
+| [`breezyvoice-macos/`](./breezyvoice-macos/) | TTS / voice cloning | macOS Apple Silicon (PyTorch MPS) | Same BreezyVoice model, native — no Colab needed |
+| [`breezyvoice-macos/breezyvoice_mlx/`](./breezyvoice-macos/breezyvoice_mlx/) | TTS / voice cloning | macOS Apple Silicon (MLX, native) | BreezyVoice ported to **MLX** — parity-tested vs PyTorch, 4/8-bit LLM quant ([PR #4](https://github.com/changtimwu/breeze-26-exp/pull/4)) |
 
 ---
 
@@ -320,6 +328,21 @@ Other tweaks:
 
 - Always pass `--speaker_prompt_text_transcription` for your reference audio if you have it — the script otherwise falls back to Whisper, which adds latency and can mis-hear domain terms.
 - Use manual 注音 hints inline for tricky polyphones: `"今天天氣真好[:ㄏㄠ3]"`. The upstream auto-annotator handles most cases on its own.
+
+---
+
+## 5. BreezyVoice → MLX port — `breezyvoice-macos/breezyvoice_mlx/`
+
+A from-scratch Apple **MLX** port of BreezyVoice (Taiwanese *Mandarin* TTS — not Taigi), built stage-by-stage with PyTorch-parity tests. Replaces the CUDA/PyTorch path with MLX so the whole pipeline (Conformer LLM → flow matching → HiFiGAN-NSF vocoder) runs natively on Apple Silicon — with a real `.pt`→MLX weight converter, 4/8-bit LLM quantization, and a packaging step.
+
+**Status:** all three stages ported and parity-tested vs PyTorch (10 suites), runs end-to-end on the real `MediaTek-Research/BreezyVoice` weights; 8-bit LLM is near-lossless (~940 MB). See [PR #4](https://github.com/changtimwu/breeze-26-exp/pull/4) and [`breezyvoice_mlx/PORTING_STATUS.md`](./breezyvoice-macos/breezyvoice_mlx/PORTING_STATUS.md).
+
+```bash
+cd breezyvoice-macos
+python breezyvoice_mlx/tools/convert_breezyvoice.py --out-dir converted_q8 --quantize --bits 8
+PYTHONPATH=breezyvoice_mlx python breezyvoice_mlx/tools/run_sft.py \
+  --weights converted_q8 --spk 中文女 --text "今天天氣真好" --out out.wav
+```
 
 ---
 
