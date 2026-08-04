@@ -11,6 +11,7 @@ Evaluation scratchpad for MediaTek Research's Breeze family of Taiwanese speech 
 | [`mlx/test_mlx.py`](./mlx/test_mlx.py) | ASR | Apple Silicon (Metal) | `mlx-whisper`, 4-bit — [`doggy8088/Breeze-ASR-26-MLX-4bit`](https://huggingface.co/doggy8088/Breeze-ASR-26-MLX-4bit) |
 | [`mlx/web/`](./mlx/web/) | ASR (browser → backend) | Apple Silicon + any modern browser | FastAPI + WebSocket + webrtcvad, same MLX model |
 | [`wcpp/`](./wcpp/) | ASR | Apple Silicon (Metal + Accelerate) | `whisper.cpp` / ggml, f16 + q8_0/q5_k/q4_k — converted here from the original weights |
+| [`wcpp/web/`](./wcpp/web/) | ASR (browser → backend) | Apple Silicon + any modern browser | FastAPI + WebSocket + webrtcvad → `whisper-server`, live quantization switch |
 | [`breezyvoice_colab.ipynb`](./breezyvoice_colab.ipynb) | TTS / voice cloning | Google Colab (Linux + NVIDIA T4) | BreezyVoice (CosyVoice-derived) — [`MediaTek-Research/BreezyVoice`](https://huggingface.co/MediaTek-Research/BreezyVoice) |
 
 ---
@@ -227,11 +228,60 @@ degenerate clips, with each engine left at its own defaults:
 That is a practical argument for the ggml path in the streaming app, independent of
 raw accuracy.
 
+### Live web app — `wcpp/web/`
+
+A browser front end for evaluating Breeze-ASR-26 on your own speech. Mic → WebSocket →
+webrtcvad utterance segmentation → WAV → `whisper-server` → transcript on the page.
+
+```bash
+pip install fastapi 'uvicorn[standard]' webrtcvad httpx numpy
+python wcpp/web/server.py                 # → http://127.0.0.1:8000
+python wcpp/web/server.py --model q8_0    # start on a different build
+python wcpp/web/server.py --host 0.0.0.0  # expose to LAN
+```
+
+One command is enough — `server.py` spawns and supervises `whisper-server` itself, then
+shuts it down on exit.
+
+**Why `whisper-server` and not `whisper-cli`:** `whisper-cli` reloads the model on every
+invocation (~0.9 s for f16), which kills the real-time feel. `whisper-server` keeps the
+ggml model resident, so per-utterance cost is decode only.
+
+**Eval affordances:**
+- **Live quantization switch.** The dropdown hot-swaps f16/q8_0/q5_k/q4_k through
+  `whisper-server`'s `/load` — measured at **0.5–0.65 s** per switch. Each utterance is
+  tagged with the model that produced it, so you can A/B builds on the same voice in one
+  session.
+- **Copy / Download** the transcript, with per-utterance timings, for offline scoring.
+- **Repetition-loop flag.** Utterances that collapse into a repeated token get a visible
+  ⚠ marker, approximating Whisper's own `compression_ratio > 2.4` heuristic.
+
+**Beam search is pinned on** (`--beam-size 5`). `whisper-server`'s own default is `-bs -1`
+(off), and greedy decoding makes this model fall into repetition loops on hard Taigi audio —
+so the app sets it explicitly. `--beam-size 1` reproduces the degenerate behaviour if you
+want to see it.
+
+Measured on this box, streaming committed recordings through the WebSocket as if they were
+mic input: **0.84 s decode for a 5.3 s utterance (6.4x realtime)**, and **1.09 s for a
+20.3 s utterance (18.6x)**. Very short utterances run *below* realtime (a 0.39 s clip took
+0.51 s) because Whisper always processes a padded 30 s window — that floor is inherent, not
+a backend problem.
+
+Caveats:
+- `whisper-server` holds one model context, so concurrent users **serialize**. Fine for one
+  or two evaluators; not a multi-tenant service.
+- No auth, no TLS. Keep it on `127.0.0.1` unless you trust the network.
+- The browser must honour `AudioContext({sampleRate: 16000})`; the page warns if it doesn't.
+- `--suppress-nst` is available to drop `(music)`-style non-speech tags, but is **off** by
+  default so the app shows what the model actually emits.
+
 ### Files
 
 - [`wcpp/convert.sh`](./wcpp/convert.sh) — build + convert + quantize, end to end
 - [`wcpp/compare.py`](./wcpp/compare.py) — cross-engine CER harness with decoding pinned
 - [`wcpp/hf_oracle.py`](./wcpp/hf_oracle.py) — fp32 reference via transformers
+- [`wcpp/web/server.py`](./wcpp/web/server.py) — FastAPI + VAD + `whisper-server` supervisor
+- [`wcpp/web/index.html`](./wcpp/web/index.html) — mic capture (AudioWorklet) + transcript UI
 
 ### Toolchain notes (both unrelated to the model)
 
