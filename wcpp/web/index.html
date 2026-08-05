@@ -169,6 +169,62 @@
       font-size: 13px; color: var(--red); font-style: italic;
     }
 
+    /* ---- batch upload ---- */
+    .card h2.card-title {
+      margin: 0 0 4px; font-size: 20px; font-weight: 600;
+    }
+    .card p.card-sub {
+      margin: 0 0 18px; font-size: 14px; color: var(--muted);
+    }
+
+    .drop {
+      border: 1px dashed var(--ink-40);
+      border-radius: 10px;
+      padding: 26px 20px;
+      text-align: center;
+      cursor: pointer;
+      transition: background 0.15s ease, border-color 0.15s ease;
+    }
+    .drop:hover, .drop.over { background: var(--ink-04); border-color: var(--ink); }
+    .drop.disabled { opacity: 0.45; cursor: not-allowed; }
+    .drop strong { font-weight: 600; }
+    .drop .hint { display: block; margin-top: 6px; font-size: 13px; color: var(--muted); }
+
+    .job {
+      margin-top: 18px; padding-top: 18px;
+      border-top: 1px solid var(--border);
+      font-size: 14px;
+    }
+    .job .name { font-weight: 600; }
+    .job .line { color: var(--muted); margin-top: 4px; }
+    .bar {
+      margin-top: 10px; height: 4px; border-radius: 9999px;
+      background: var(--ink-04); overflow: hidden;
+    }
+    .bar span {
+      display: block; height: 100%; width: 0%;
+      background: var(--ink); border-radius: 9999px;
+      transition: width 0.4s linear;
+    }
+    .bar.indeterminate span {
+      width: 35%; animation: slide 1.4s ease-in-out infinite;
+    }
+    @keyframes slide {
+      0% { margin-left: -35%; } 100% { margin-left: 100%; }
+    }
+    .job .actions { margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap; }
+    .job .err { color: var(--red); margin-top: 6px; }
+
+    .seg-time {
+      font-variant-numeric: tabular-nums;
+      color: var(--muted);
+    }
+    .src-tag {
+      display: inline-block; margin-left: 6px; padding: 0 6px;
+      border: 1px solid var(--border); border-radius: 4px;
+      font-size: 12px; color: var(--muted); vertical-align: 1px;
+    }
+
     footer {
       padding: 32px 24px; text-align: center;
       font-size: 14px; color: var(--muted);
@@ -211,6 +267,47 @@
       </div>
 
       <p id="info" class="info"></p>
+    </div>
+
+    <div class="card" id="upload-card">
+      <h2 class="card-title">Transcribe a file</h2>
+      <p class="card-sub">
+        Batch mode — the whole file goes to whisper.cpp in one pass, so it keeps
+        decoder context across its 30&nbsp;s windows instead of being cut into pieces.
+      </p>
+
+      <div id="drop" class="drop" tabindex="0" role="button"
+           aria-label="Choose or drop an audio file">
+        <strong>Drop an audio file</strong> or click to choose
+        <span class="hint" id="drop-hint">wav, mp3, m4a, flac, ogg, mp4 …</span>
+      </div>
+      <input type="file" id="file" accept="audio/*,video/*" hidden>
+
+      <div class="row">
+        <label class="field" for="ts">
+          <input type="checkbox" id="ts" checked>
+          Segment timestamps
+        </label>
+        <span class="field" id="ts-note">
+          needed for .srt/.vtt — costs roughly 5&times; the decode time
+        </span>
+      </div>
+
+      <div id="job" class="job" hidden>
+        <div class="name" id="job-name"></div>
+        <div class="line" id="job-line"></div>
+        <div class="bar" id="job-bar"><span></span></div>
+        <div class="err" id="job-err" hidden></div>
+        <div class="actions" id="job-actions" hidden>
+          <button class="ghost" type="button" data-fmt="txt">Download .txt</button>
+          <button class="ghost" type="button" data-fmt="srt">.srt</button>
+          <button class="ghost" type="button" data-fmt="vtt">.vtt</button>
+          <button class="ghost" type="button" data-fmt="json">.json</button>
+        </div>
+        <div class="actions" id="job-cancel-wrap" hidden>
+          <button class="ghost" type="button" id="job-cancel">Cancel</button>
+        </div>
+      </div>
     </div>
 
     <div class="card">
@@ -345,20 +442,69 @@
       const el = document.createElement('div');
       const looping = msg.text && looksLooping(msg.text);
       el.className = 'utterance' + (msg.text ? '' : ' empty-text') + (looping ? ' looping' : '');
-      const meta = `${msg.ts} · ${msg.model} · ${msg.spoken_s}s spoken · ` +
-                   `${msg.decode_s}s decode · ${msg.xrt}× realtime`;
+      let meta = `${msg.ts} · ${msg.model} · ${msg.spoken_s}s spoken · ` +
+                 `${msg.decode_s}s decode · ${msg.xrt}× realtime`;
+      let metaHtml = escapeHtml(meta);
+      if (msg.source && msg.source !== 'mic') {
+        metaHtml += '<span class="src-tag">' + escapeHtml(msg.source) + '</span>';
+      }
       el.innerHTML =
-        '<p class="meta">' + escapeHtml(meta) + '</p>' +
+        '<p class="meta">' + metaHtml + '</p>' +
         '<p class="text">' + (msg.text ? escapeHtml(msg.text) : '&lt;no transcription&gt;') + '</p>';
       transcript.appendChild(el);
       el.scrollIntoView({ behavior: 'smooth', block: 'end' });
       refreshActions();
     }
 
+    function mmss(t) {
+      const s = Math.max(0, Math.floor(t % 60)), m = Math.floor(t / 60);
+      return `${m}:${String(s).padStart(2, '0')}`;
+    }
+
+    // A finished batch job lands as one transcript row per segment, so timestamps,
+    // copy/download and the loop marker all work the same as for mic utterances.
+    function addJobSegments(job) {
+      if (firstResult) { transcript.innerHTML = ''; firstResult = false; }
+      const segs = job.segments || [];
+      if (!segs.length) {
+        addUtterance({
+          ts: job.created_at, model: job.model, source: job.filename,
+          spoken_s: job.duration_s, decode_s: job.decode_s, xrt: job.xrt, text: '',
+        });
+        return;
+      }
+      for (const s of segs) {
+        // start/end are null when the job ran without timestamps — show no range
+        // rather than a bogus 0:00–0:00.
+        const timed = s.start !== null && s.end !== null;
+        const range = timed ? `${mmss(s.start)} – ${mmss(s.end)}` : '';
+        rows.push({
+          ts: timed ? `${mmss(s.start)}–${mmss(s.end)}` : job.created_at,
+          model: job.model, source: job.filename,
+          spoken_s: timed ? (s.end - s.start).toFixed(1) : job.duration_s,
+          decode_s: job.decode_s, xrt: job.xrt, text: s.text,
+        });
+        const el = document.createElement('div');
+        const looping = looksLooping(s.text);
+        el.className = 'utterance' + (looping ? ' looping' : '');
+        el.innerHTML =
+          '<p class="meta">' +
+            (timed ? '<span class="seg-time">' + escapeHtml(range) + '</span>' : '') +
+            '<span class="src-tag">' + escapeHtml(job.filename) + '</span>' +
+            '<span class="src-tag">' + escapeHtml(job.model) + '</span></p>' +
+          '<p class="text">' + escapeHtml(s.text) + '</p>';
+        transcript.appendChild(el);
+      }
+      transcript.lastElementChild.scrollIntoView({ behavior: 'smooth', block: 'end' });
+      refreshActions();
+    }
+
     function transcriptText() {
-      return rows.map(r =>
-        `[${r.ts}] (${r.model}, ${r.spoken_s}s, ${r.xrt}x) ${r.text || '<no transcription>'}`
-      ).join('\n');
+      return rows.map(r => {
+        const src = r.source && r.source !== 'mic' ? ` [${r.source}]` : '';
+        return `[${r.ts}]${src} (${r.model}, ${r.spoken_s}s, ${r.xrt}x) ` +
+               (r.text || '<no transcription>');
+      }).join('\n');
     }
 
     copyBtn.addEventListener('click', async () => {
@@ -517,7 +663,214 @@
       if (running) await stop(); else await start();
     });
 
+    // ---- batch upload ----------------------------------------------------
+    const dropEl    = document.getElementById('drop');
+    const fileEl    = document.getElementById('file');
+    const dropHint  = document.getElementById('drop-hint');
+    const jobEl     = document.getElementById('job');
+    const jobName   = document.getElementById('job-name');
+    const jobLine   = document.getElementById('job-line');
+    const jobBar    = document.getElementById('job-bar');
+    const jobErr    = document.getElementById('job-err');
+    const jobActs   = document.getElementById('job-actions');
+    const jobCancelWrap = document.getElementById('job-cancel-wrap');
+    const jobCancel = document.getElementById('job-cancel');
+    const tsEl      = document.getElementById('ts');
+
+    let uploadsEnabled = true;
+    let currentJob = null;
+    let jobSource = null;   // EventSource for SSE
+    let etaTimer = null;
+
+    async function loadLimits() {
+      try {
+        const d = await (await fetch('/limits')).json();
+        uploadsEnabled = !!d.uploads;
+        if (!uploadsEnabled) {
+          dropEl.classList.add('disabled');
+          dropHint.textContent = 'uploads are disabled on this server';
+          return;
+        }
+        const mins = Math.round(d.max_duration_s / 60);
+        dropHint.textContent =
+          `wav, mp3, m4a, flac, ogg, mp4 … · up to ${d.max_upload_mb} MB / ${mins} min`;
+      } catch {
+        dropHint.textContent = 'wav, mp3, m4a, flac, ogg, mp4 …';
+      }
+    }
+
+    function setBar(pct) {
+      if (pct === null) {
+        jobBar.classList.add('indeterminate');
+        jobBar.firstElementChild.style.width = '';
+      } else {
+        jobBar.classList.remove('indeterminate');
+        jobBar.firstElementChild.style.width = Math.min(100, Math.max(0, pct)) + '%';
+      }
+    }
+
+    // whisper-server reports no progress, so rather than fake a percentage we run the
+    // bar off the measured-xRT estimate and show elapsed vs. estimate honestly.
+    function renderJob(job) {
+      currentJob = job;
+      jobEl.hidden = false;
+      jobName.textContent = job.filename;
+      jobErr.hidden = true;
+      const dur = `${mmss(job.duration_s)} audio`;
+      const model = `${job.model}`;
+
+      if (job.status === 'queued') {
+        const pos = job.queue_position;
+        jobLine.textContent =
+          `${dur} · ${model} · queued${pos ? ` — ${pos} job(s) ahead` : ' — next up'}`;
+        setBar(null);
+        jobActs.hidden = true; jobCancelWrap.hidden = false;
+      } else if (job.status === 'transcoding') {
+        jobLine.textContent = `${dur} · ${model} · converting audio…`;
+        setBar(null);
+        jobActs.hidden = true; jobCancelWrap.hidden = false;
+      } else if (job.status === 'running') {
+        const el = job.elapsed_s ?? 0, eta = job.eta_s ?? 0;
+        const left = Math.max(0, eta - el);
+        if (eta && el <= eta) {
+          jobLine.textContent =
+            `${dur} · ${model} · transcribing — ${el.toFixed(0)}s elapsed, ` +
+            `~${left.toFixed(0)}s left (rough est. ${eta.toFixed(0)}s)`;
+          setBar((el / eta) * 100);
+        } else {
+          // Overran the estimate — an indeterminate bar is honest, a bar pinned at
+          // 100% while still working is not.
+          jobLine.textContent =
+            `${dur} · ${model} · transcribing — ${el.toFixed(0)}s elapsed` +
+            (eta ? `, longer than the ${eta.toFixed(0)}s estimate` : '');
+          setBar(null);
+        }
+        jobActs.hidden = true; jobCancelWrap.hidden = false;
+      } else if (job.status === 'done') {
+        jobLine.textContent =
+          `${dur} · ${model} · done in ${job.decode_s}s (${job.xrt}× realtime) · ` +
+          `${(job.segments || []).length} segments`;
+        setBar(100);
+        jobActs.hidden = false; jobCancelWrap.hidden = true;
+        // subtitles need real segment times
+        for (const b of jobActs.querySelectorAll('button[data-fmt]')) {
+          const subs = b.dataset.fmt === 'srt' || b.dataset.fmt === 'vtt';
+          b.hidden = subs && job.timestamps === false;
+        }
+      } else if (job.status === 'cancelled') {
+        jobLine.textContent = `${dur} · cancelled`;
+        setBar(0);
+        jobActs.hidden = true; jobCancelWrap.hidden = true;
+      } else if (job.status === 'error') {
+        jobLine.textContent = `${dur} · failed`;
+        jobErr.hidden = false;
+        jobErr.textContent = job.error || 'unknown error';
+        setBar(0);
+        jobActs.hidden = true; jobCancelWrap.hidden = true;
+      }
+    }
+
+    function stopWatching() {
+      if (jobSource) { try { jobSource.close(); } catch (_) {} jobSource = null; }
+      if (etaTimer) { clearInterval(etaTimer); etaTimer = null; }
+    }
+
+    function watchJob(job) {
+      stopWatching();
+      renderJob(job);
+      jobSource = new EventSource(`/jobs/${job.id}/events`);
+      jobSource.onmessage = (ev) => {
+        let j;
+        try { j = JSON.parse(ev.data); } catch { return; }
+        renderJob(j);
+        if (j.status === 'done') {
+          stopWatching();
+          addJobSegments(j);
+        } else if (j.status === 'error' || j.status === 'cancelled') {
+          stopWatching();
+        }
+      };
+      jobSource.onerror = () => {
+        // SSE dropped — fall back to a single poll so the UI doesn't hang.
+        stopWatching();
+        fetch(`/jobs/${job.id}`).then(r => r.json()).then(j => {
+          renderJob(j);
+          if (j.status === 'done') addJobSegments(j);
+        }).catch(() => {});
+      };
+      // Tick locally between server events so "elapsed" moves smoothly.
+      etaTimer = setInterval(() => {
+        if (currentJob && currentJob.status === 'running') {
+          currentJob.elapsed_s = (currentJob.elapsed_s ?? 0) + 1;
+          renderJob(currentJob);
+        }
+      }, 1000);
+    }
+
+    async function uploadFile(f) {
+      if (!uploadsEnabled || !f) return;
+      stopWatching();
+      jobEl.hidden = false;
+      jobName.textContent = f.name;
+      jobLine.textContent = `uploading ${(f.size / 1048576).toFixed(1)} MB…`;
+      jobErr.hidden = true; jobActs.hidden = true; jobCancelWrap.hidden = true;
+      setBar(null);
+
+      const body = new FormData();
+      body.append('file', f, f.name);
+      body.append('model', modelSel.value || '');
+      body.append('timestamps', tsEl.checked ? 'true' : 'false');
+      try {
+        const r = await fetch('/jobs', { method: 'POST', body });
+        const j = await r.json();
+        if (!r.ok) {
+          jobLine.textContent = 'upload rejected';
+          jobErr.hidden = false;
+          jobErr.textContent = j.detail || `HTTP ${r.status}`;
+          setBar(0);
+          return;
+        }
+        watchJob(j);
+      } catch (e) {
+        jobLine.textContent = 'upload failed';
+        jobErr.hidden = false;
+        jobErr.textContent = e.message || String(e);
+        setBar(0);
+      }
+    }
+
+    dropEl.addEventListener('click', () => { if (uploadsEnabled) fileEl.click(); });
+    dropEl.addEventListener('keydown', (e) => {
+      if ((e.key === 'Enter' || e.key === ' ') && uploadsEnabled) { e.preventDefault(); fileEl.click(); }
+    });
+    fileEl.addEventListener('change', () => {
+      if (fileEl.files && fileEl.files[0]) uploadFile(fileEl.files[0]);
+      fileEl.value = '';
+    });
+    ['dragenter', 'dragover'].forEach(t => dropEl.addEventListener(t, (e) => {
+      e.preventDefault(); if (uploadsEnabled) dropEl.classList.add('over');
+    }));
+    ['dragleave', 'drop'].forEach(t => dropEl.addEventListener(t, (e) => {
+      e.preventDefault(); dropEl.classList.remove('over');
+    }));
+    dropEl.addEventListener('drop', (e) => {
+      const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+      if (f) uploadFile(f);
+    });
+
+    jobCancel.addEventListener('click', async () => {
+      if (!currentJob) return;
+      try { await fetch(`/jobs/${currentJob.id}`, { method: 'DELETE' }); } catch (_) {}
+    });
+
+    jobActs.addEventListener('click', (e) => {
+      const btn = e.target.closest('button[data-fmt]');
+      if (!btn || !currentJob) return;
+      window.location = `/jobs/${currentJob.id}/download?format=${btn.dataset.fmt}`;
+    });
+
     loadModels();
+    loadLimits();
     refreshActions();
   </script>
 </body>

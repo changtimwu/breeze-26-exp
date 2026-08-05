@@ -255,6 +255,51 @@ shuts it down on exit.
 invocation (~0.9 s for f16), which kills the real-time feel. `whisper-server` keeps the
 ggml model resident, so per-utterance cost is decode only.
 
+**Batch mode — transcribe an uploaded file.** Drop in a wav/mp3/m4a/flac/ogg/mp4 and it
+runs as a job: `ffmpeg` transcodes to 16 kHz mono, then the *whole* file goes to
+`whisper-server` in one pass so whisper.cpp keeps decoder context across its own 30 s
+windows instead of being cut into pieces. Progress streams over SSE; export as
+txt/srt/vtt/json.
+
+```
+POST   /jobs                 multipart: file=<audio>, [model=], [timestamps=true|false]
+GET    /jobs/{id}            state, queue position, elapsed, ETA, result
+GET    /jobs/{id}/events     SSE stream of the above
+GET    /jobs/{id}/download?format=txt|srt|vtt|json
+DELETE /jobs/{id}            cancel
+GET    /limits               caps + xRT coefficients
+```
+
+Everything — mic *and* batch — is serialized behind one lock, because `whisper-server`
+holds a single model context. A long upload delays live utterances rather than corrupting
+them, and the UI shows the queue position.
+
+**Segment timestamps cost ~5x**, so they're a checkbox. Measured on q4_k:
+
+| audio | timestamps on | off |
+|---|---|---|
+| 105 s | 27.1 s (xRT 0.26) | 5.1 s (xRT 0.05) |
+| 369 s | 131.8 s (xRT 0.36) | — |
+
+The penalty is `no_timestamps=false` itself — whisper.cpp has to predict timestamp tokens
+while decoding. (`token_timestamps` must be sent explicitly to stay off; `whisper-server`
+otherwise defaults it to `!no_timestamps` and you pay for a second pass too.) The spread
+is driven by **content, not duration** — the clip that sends the model into a repetition
+loop hit xRT 0.73, because a loop runs the decoder to its token cap. Since `whisper-server`
+exposes no progress at all, the UI predicts an ETA from these coefficients, labels it a
+rough estimate, and switches to an indeterminate bar once elapsed passes it rather than
+pinning at 100%.
+
+Subtitle export is generated from the stored segments, not by re-asking `whisper-server`
+for `srt`/`vtt` — that would pay for inference twice. Asking for subtitles from a job that
+ran without timestamps returns 409 rather than emitting fake cues.
+
+Guardrails, since the app has no auth and may be tunnelled: `--max-upload-mb` (100),
+`--max-duration-s` (1800), `--max-queue` (3, then 429), uploads streamed to temp files and
+deleted on completion *and* error, job records expiring after an hour, and `--no-upload` to
+turn the whole thing off. Uploads are validated by probing the container with `ffprobe`,
+never by trusting the extension or the client's content type.
+
 **Eval affordances:**
 - **Live quantization switch.** The dropdown hot-swaps f16/q8_0/q5_k/q4_k through
   `whisper-server`'s `/load` — measured at **0.5–0.65 s** per switch. Each utterance is
@@ -276,6 +321,14 @@ mic input: **0.84 s decode for a 5.3 s utterance (6.4x realtime)**, and **1.09 s
 a backend problem.
 
 Caveats:
+- **Repeat runs on the same audio can differ.** Observed on this setup: three identical
+  requests returning three different transcripts on some server instances, while a freshly
+  started instance returned identical output three times. It is *not* temperature fallback
+  (`temperature_inc=0` doesn't fix it), *not* thread or Metal reduction order (`-t 1 -ng` is
+  still affected), and *not* cross-request context bleed (an A→B→A sequence returned
+  identical results for both A's). Root cause unresolved. Practical consequence for
+  evaluation: **don't treat a single run as ground truth** — repeat it, or score with
+  [`wcpp/compare.py`](./wcpp/compare.py) over a clip set.
 - `whisper-server` holds one model context, so concurrent users **serialize**. Fine for one
   or two evaluators; not a multi-tenant service.
 - No auth, no TLS. Keep it on `127.0.0.1` unless you trust the network.
